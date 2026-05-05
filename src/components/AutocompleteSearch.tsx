@@ -263,7 +263,7 @@ const AutocompleteSearch = ({
                                                 "hover:shadow-soft first:rounded-t-xl last:rounded-b-xl"
                                             )}
                                         >
-                                            <span className="flex aspect-square h-10 w-10 items-center justify-center rounded-full bg-gray-400/40">
+                                            <span className="flex aspect-square h-10 w-10 items-center justify-center rounded-full bg-linear-to-t from-[#40385b] to-[#696679]">
                                                 <UserIconContactList
                                                     size={30}
                                                     className="text-[4.2rem] text-white"

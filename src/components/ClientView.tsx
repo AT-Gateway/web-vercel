@@ -930,7 +930,7 @@ export default function ClientView() {
                         >
                             Messages
                             {isDemoMode ? (
-                                <span className="rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] uppercase tracking-wide text-emerald-100">
+                                <span className="rounded-full border border-emerald-400/30 bg-emerald-500/15 px-2 py-0.5 text-[10px] tracking-wide text-emerald-100 uppercase">
                                     Demo
                                 </span>
                             ) : null}
@@ -1203,7 +1203,7 @@ export default function ClientView() {
                                         )}
                                         onClick={() => selectConversation(c)}
                                     >
-                                        <span className="flex aspect-square h-12 w-12 items-center justify-center rounded-full bg-gray-400/40">
+                                        <span className="flex aspect-square h-12 w-12 items-center justify-center rounded-full bg-linear-to-t from-[#40385b] to-[#696679]">
                                             {c.peerName ? (
                                                 <span className="text-4xl font-bold">
                                                     {c.peerName.slice(0, 1)}
@@ -1286,7 +1286,7 @@ export default function ClientView() {
                                     "z-99 bg-linear-to-b from-black via-black/80 to-black/0 pb-10"
                                 )}
                             >
-                                <span className="flex aspect-square h-12 w-12 items-center justify-center rounded-full bg-gray-400/40">
+                                <span className="z-10 flex aspect-square h-12 w-12 items-center justify-center rounded-full bg-linear-to-t from-[#40385b] to-[#696679]">
                                     {activeConversation?.peerName ||
                                     activeContact?.displayName ? (
                                         <span className="text-4xl font-bold">
@@ -1303,7 +1303,7 @@ export default function ClientView() {
                                     )}
                                 </span>
 
-                                <span className="flex items-center justify-center rounded-full border border-gray-400/40 bg-[#1e1e1e]/60 px-3 py-1 text-sm font-semibold text-white backdrop-blur-3xl">
+                                <span className="-mt-2.5 flex items-center justify-center rounded-full border border-gray-400/40 bg-[#1e1e1e]/60 px-3 py-1 text-sm font-semibold text-white backdrop-blur-3xl">
                                     {activeConversation?.peerName ||
                                         activeContact?.displayName ||
                                         activeConversation?.peer ||
@@ -1380,7 +1380,7 @@ export default function ClientView() {
                             </div>
 
                             <div className="absolute bottom-0 z-99 flex w-full items-end gap-2 bg-linear-to-t from-black via-black/80 to-black/0 p-2 md:p-4">
-                                <div className="w-full max-w-18 lg:max-w-24">
+                                <div className="w-fit">
                                     <GlassSelect
                                         value={
                                             simSlotIndex === null
@@ -1419,7 +1419,7 @@ export default function ClientView() {
                                         }
                                     }}
                                     placeholder="Type a message…"
-                                    className="w-full resize-none rounded-3xl border border-gray-400/40 bg-[#1e1e1e]/60 px-4 py-2 text-sm outline-0 backdrop-blur-3xl transition-colors focus:border-gray-400/80 md:text-base"
+                                    className="w-full resize-none rounded-3xl border border-gray-400/40 bg-[#1e1e1e]/60 px-4 py-2.5 text-sm outline-0 backdrop-blur-3xl transition-colors focus:border-gray-400/80 md:text-base"
                                     style={{ maxHeight: 400 }}
                                     disabled={pairLoading || !pairState}
                                 />
@@ -1433,7 +1433,7 @@ export default function ClientView() {
                                         !composer.trim() ||
                                         !(activeSendTo || activeConversation?.peer)
                                     }
-                                    className="flex h-10 w-10 min-w-10 cursor-pointer items-center justify-center rounded-full border border-gray-400/40 bg-white text-black backdrop-blur-3xl transition-all duration-150 hover:scale-[1.05] hover:bg-white/75 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
+                                    className="flex h-10.25 w-10.25 min-w-10.25 cursor-pointer items-center justify-center rounded-full border border-gray-400/40 bg-white text-black backdrop-blur-3xl transition-all duration-150 hover:scale-[1.05] hover:bg-white/75 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
                                     title="Send"
                                 >
                                     <BiSolidSend className="text-2xl" />
@@ -1492,7 +1492,7 @@ export default function ClientView() {
                                         <FiArrowLeft className="text-xl" />
                                     </button>
 
-                                    <span className="flex aspect-square h-12 w-12 items-center justify-center rounded-full bg-gray-400/40">
+                                    <span className="flex aspect-square h-12 w-12 items-center justify-center rounded-full bg-linear-to-t from-[#40385b] to-[#696679]">
                                         {activeConversation?.peerName ||
                                         activeContact?.displayName ? (
                                             <span className="text-4xl font-bold">
@@ -1754,7 +1754,7 @@ function PairingScreen(props: {
 
                 <button
                     type="button"
-                    className="mt-2 rounded-full border border-emerald-400/30 bg-emerald-500/15 px-6 py-2 text-sm text-emerald-100 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="cursor-pointer mt-2 rounded-full border border-emerald-400/30 bg-emerald-500/15 px-6 py-2 text-sm text-emerald-100 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={() => {
                         setCode(demoCode);
                         void doPair(demoCode);
