@@ -23,6 +23,13 @@ export async function registerSmsRoutes(app: FastifyInstance, repo: ReturnType<t
     return { ok: true, threadId, messages };
   });
 
+  app.post('/api/sms/threads/:threadId/read', async (req) => {
+    const p = req.pairAuth!;
+    const threadId = String((req.params as any)?.threadId ?? '').trim();
+    if (!threadId) return { ok: false, error: 'Missing threadId' };
+    return repo.markThreadRead(p.pairingId, threadId);
+  });
+
   app.post('/api/sms/send', async (req, reply) => {
     const p = req.pairAuth!;
     const body = (req.body ?? {}) as any;

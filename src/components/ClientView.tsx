@@ -17,6 +17,7 @@ import {
     listConversations,
     listDevices,
     listMessages,
+    markThreadRead,
     type Message,
     pairComplete,
     pairMe,
@@ -445,6 +446,20 @@ export default function ClientView() {
                 const res = await listMessages(pairState.pairToken, tid, 800);
                 if (ac.signal.aborted) return;
                 setMessagesByThread((prev) => ({ ...prev, [tid]: res.messages ?? [] }));
+
+                // Opening/refreshing the active thread should clear its unread badge.
+                try {
+                    await markThreadRead(pairState.pairToken, tid);
+                    if (!ac.signal.aborted) {
+                        setConversations((prev) =>
+                            prev.map((c) =>
+                                c.threadId === tid ? { ...c, unreadCount: 0 } : c
+                            )
+                        );
+                    }
+                } catch {
+                    // Keep reading messages usable even if the optional read endpoint fails.
+                }
             } catch (e: any) {
                 if (ac.signal.aborted) return;
                 showToast("Failed to load messages", e?.message);
@@ -586,6 +601,11 @@ export default function ClientView() {
             setActiveThreadId(c.threadId);
             setActiveSendTo(c.peer);
             setDrawerOpen(false);
+            setConversations((prev) =>
+                prev.map((item) =>
+                    item.threadId === c.threadId ? { ...item, unreadCount: 0 } : item
+                )
+            );
 
             router.replace(`/?tid=${c.threadId}&peer=${encodeURIComponent(c.peer)}`);
             refreshThreadMessages(c.threadId);

@@ -176,6 +176,16 @@ export async function listMessages(
     );
 }
 
+export async function markThreadRead(
+    pairToken: string,
+    threadId: string
+): Promise<ApiOk<{}>> {
+    return apiFetch(`/api/sms/threads/${encodeURIComponent(threadId)}/read`, {
+        method: "POST",
+        pairToken,
+    });
+}
+
 export async function sendSms(
     pairToken: string,
     params: { to: string; body: string; simSlotIndex?: 0 | 1; subscriptionId?: number }

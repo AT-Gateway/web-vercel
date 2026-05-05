@@ -748,6 +748,15 @@ export function createRepo(pool: Pool) {
     };
   }
 
+  async function markThreadRead(pairingId: string, threadId: string): Promise<{ ok: true }> {
+    // Real database unread counts are not persisted yet, so this is a no-op for production data.
+    // Demo mode overrides this method to clear seeded unread badges when a chat is opened.
+    void pairingId;
+    void threadId;
+    return { ok: true };
+  }
+
+
   // ---------------- messages ----------------
 
   async function insertMessage(input: {
@@ -1125,6 +1134,7 @@ export function createRepo(pool: Pool) {
     // conversations
     listConversations,
     resolvePeerByThreadId,
+    markThreadRead,
 
     // messages
     insertMessage,

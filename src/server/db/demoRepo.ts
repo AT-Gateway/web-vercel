@@ -40,6 +40,7 @@ type DemoState = {
   contacts: DemoContact[];
   devices: DemoDevice[];
   messages: MessageRow[];
+  readAtByThread: Map<string, number>;
   pushSubscriptions: Array<{ deviceId: string; subscription: any }>;
   telegramSessions: Map<string, TelegramSession>;
 };
@@ -95,14 +96,18 @@ function buildMessage(input: {
 function makeDemoState(cfg: DemoConfig): DemoState {
   const now = Date.now();
   const contactsRaw = [
-    { name: 'Sahar Abbasi', number: '+989121112233' },
-    { name: 'Ali Rezaei', number: '+989353334455' },
-    { name: 'Neda Mohammadi', number: '+989151234567' },
-    { name: 'GoToSafar Support', number: '+982100004242' },
-    { name: 'Mina Karimi', number: '+989127778899' },
-    { name: 'Reza Frontend', number: '+989301112244' },
-    { name: 'Hotel Atlas', number: '+902125551010' },
-    { name: 'Demo OTP Service', number: '+989990000000' },
+    { name: 'Emma Carter', number: '+14155550132' },
+    { name: 'Michael Brooks', number: '+12125550184' },
+    { name: 'Olivia Martin', number: '+13105550191' },
+    { name: 'Sarah Johnson', number: '+16175550145' },
+    { name: 'Mert Yilmaz', number: '+905325551010' },
+    { name: 'Ayse Demir', number: '+905555551121' },
+    { name: 'Emirates Travel Desk', number: '+971555012034' },
+    { name: 'Dubai Hotel Concierge', number: '+97144550144' },
+    { name: 'London Visa Center', number: '+442071838750' },
+    { name: 'Berlin Car Service', number: '+493055501209' },
+    { name: 'Demo OTP Service', number: '+18885550100' },
+    { name: 'AT Gateway Support', number: '+18005550199' },
   ];
 
   const contacts = contactsRaw.map((c) => {
@@ -130,6 +135,118 @@ function makeDemoState(cfg: DemoConfig): DemoState {
       createdBy: direction === 'out' ? 'pwa' : 'android',
     });
 
+  const messages = [
+    // Active recent sales / presentation-style chat. 3 unread incoming messages.
+    m('+14155550132', 'in', 'Morning! Are you still good to show the SMS gateway demo at 2?', 72),
+    m('+14155550132', 'out', 'Yes. I have the demo mode ready, so we will not need the Android phone connected.', 70),
+    m('+14155550132', 'in', 'Great. Can you start with the pairing screen and then open the seeded chats?', 65),
+    m('+14155550132', 'out', 'Exactly. I will use the 000000 code, show the contacts, then send a sample SMS.', 60),
+    m('+14155550132', 'in', 'Perfect. Please also mention that /api and the web app are on the same Vercel URL.', 24),
+    m('+14155550132', 'in', 'One more thing: keep the fake replies visible so the flow feels live.', 18),
+    m('+14155550132', 'in', 'Thanks — this will make the presentation much easier.', 12),
+
+    // Turkish chat. 2 unread messages.
+    m('+905325551010', 'in', 'Merhaba Amir, Istanbul hotel transfer details came through.', 310),
+    m('+905325551010', 'out', 'Thanks Mert. Is pickup still from Gate 8?', 304),
+    m('+905325551010', 'in', 'Yes, Gate 8. The driver will hold a sign with your name.', 298),
+    m('+905325551010', 'out', 'Perfect. Please send the driver number when it is assigned.', 290),
+    m('+905325551010', 'in', 'Driver: Deniz, +90 532 555 44 82.', 36),
+    m('+905325551010', 'in', 'He will arrive 10 minutes early.', 28),
+
+    // UAE travel/service chat. 4 unread messages.
+    m('+971555012034', 'in', 'Hello Amir, your Dubai itinerary has been updated.', 1_080),
+    m('+971555012034', 'out', 'Thanks. Did the airport pickup time change?', 1_064),
+    m('+971555012034', 'in', 'Yes, pickup is now 7:15 PM local time.', 1_030),
+    m('+971555012034', 'out', 'Got it. Please keep the same hotel drop-off.', 1_020),
+    m('+971555012034', 'in', 'Confirmed. Hotel drop-off remains the same.', 52),
+    m('+971555012034', 'in', 'Your voucher number is UAE-48219.', 48),
+    m('+971555012034', 'in', 'The driver will message you after landing.', 46),
+    m('+971555012034', 'in', 'Reply HELP if you need support during the trip.', 41),
+
+    // American personal chat. Read conversation.
+    m('+12125550184', 'in', 'Hey, quick question: did you deploy the latest frontend build?', 1_520),
+    m('+12125550184', 'out', 'Yes, pushed it last night. The Vercel preview is already live.', 1_512),
+    m('+12125550184', 'in', 'Nice. The chat list feels smoother now.', 1_500),
+    m('+12125550184', 'out', 'I also fixed the same-domain API setup under /api.', 1_492),
+    m('+12125550184', 'in', 'That is exactly what we needed.', 1_480),
+
+    // Longer support chat. 1 unread message.
+    m('+18005550199', 'in', 'AT Gateway Support: your demo workspace is active.', 2_160),
+    m('+18005550199', 'out', 'Great. Can I present without setting up Postgres?', 2_150),
+    m('+18005550199', 'in', 'Yes. Demo mode uses seeded in-memory conversations when the code is 000000.', 2_140),
+    m('+18005550199', 'out', 'And the frontend still calls the backend on the same URL?', 2_132),
+    m('+18005550199', 'in', 'Correct. Use /api for backend requests and the rest of the URL for the web app.', 2_122),
+    m('+18005550199', 'in', 'We also added multiple unread counts so the inbox looks realistic.', 33),
+
+    // OTP/business chat. Read conversation.
+    m('+18885550100', 'in', 'Your demo verification code is 000000. Do not share it outside the presentation.', 2_940),
+    m('+18885550100', 'out', 'Received. I will use it only for demo mode.', 2_930),
+    m('+18885550100', 'in', 'Demo contacts and fake SMS messages are ready.', 2_920),
+
+    // UAE hotel concierge. Read conversation with recent outgoing last message.
+    m('+97144550144', 'in', 'Good evening. Your room is confirmed for early check-in.', 4_320),
+    m('+97144550144', 'out', 'Thank you. Could you also arrange a quiet room if available?', 4_300),
+    m('+97144550144', 'in', 'Of course. We added a quiet-room request to your booking.', 4_280),
+    m('+97144550144', 'out', 'Appreciate it. I will arrive around 9:30 AM.', 4_260),
+
+    // Turkish normal life chat. 2 unread messages.
+    m('+905555551121', 'in', 'Selam, I booked the table for Saturday night.', 5_500),
+    m('+905555551121', 'out', 'Great, what time?', 5_480),
+    m('+905555551121', 'in', '8:30 PM. The place is near Karakoy.', 5_460),
+    m('+905555551121', 'out', 'Sounds good. Send the location when you can.', 5_455),
+    m('+905555551121', 'in', 'Sending it now.', 95),
+    m('+905555551121', 'in', 'Also, parking is easier on the side street.', 88),
+
+    // London Visa Center. Read conversation.
+    m('+442071838750', 'in', 'Your appointment reminder: Wednesday at 10:20 AM.', 6_420),
+    m('+442071838750', 'out', 'Thanks. Do I need to bring printed hotel confirmations?', 6_400),
+    m('+442071838750', 'in', 'Printed copies are recommended, but digital copies are accepted.', 6_380),
+
+    // Berlin car service. 1 unread message.
+    m('+493055501209', 'in', 'Hallo Amir, your car is scheduled for 6:40 tomorrow morning.', 7_200),
+    m('+493055501209', 'out', 'Thanks. Please make sure there is space for two bags.', 7_180),
+    m('+493055501209', 'in', 'No problem. The driver will bring a wagon car.', 74),
+
+    // California contact. Read and friendly.
+    m('+13105550191', 'in', 'Lunch tomorrow?', 8_200),
+    m('+13105550191', 'out', 'Works for me. Around 12:30?', 8_180),
+    m('+13105550191', 'in', '12:30 is perfect. Same place as last time.', 8_160),
+    m('+13105550191', 'out', 'Done. I added it to my calendar.', 8_150),
+
+    // Boston contact. Unread 1.
+    m('+16175550145', 'in', 'Can you review the tiny layout issue on mobile?', 11_000),
+    m('+16175550145', 'out', 'Sure, send me a screenshot when you have it.', 10_980),
+    m('+16175550145', 'in', 'Sent it. It happens only on narrow screens.', 21),
+  ].sort((a, b) => a.ts - b.ts);
+
+  const readAtByThread = new Map<string, number>();
+  const unreadSeeds: Record<string, number> = {
+    [threadIdFor('+14155550132')]: 3,
+    [threadIdFor('+905325551010')]: 2,
+    [threadIdFor('+971555012034')]: 4,
+    [threadIdFor('+18005550199')]: 1,
+    [threadIdFor('+905555551121')]: 2,
+    [threadIdFor('+493055501209')]: 1,
+    [threadIdFor('+16175550145')]: 1,
+  };
+
+  const threads = new Map<string, MessageRow[]>();
+  for (const msg of messages) {
+    const thread = msg.threadId || threadIdFor(msg.peer);
+    const list = threads.get(thread) ?? [];
+    list.push(msg);
+    threads.set(thread, list);
+  }
+
+  for (const [thread, list] of threads) {
+    const unreadCount = unreadSeeds[thread] ?? 0;
+    const incoming = list.filter((msg) => msg.direction === 'in');
+    const unreadIncoming = unreadCount > 0 ? incoming.slice(-unreadCount) : [];
+    const firstUnreadAt = unreadIncoming[0]?.ts ?? null;
+    const lastMessageAt = list[list.length - 1]?.ts ?? now;
+    readAtByThread.set(thread, firstUnreadAt ? firstUnreadAt - 1 : lastMessageAt + 1);
+  }
+
   return {
     createdAt: now - 7 * 24 * 60 * 60 * 1000,
     contacts,
@@ -151,23 +268,8 @@ function makeDemoState(cfg: DemoConfig): DemoState {
         pairToken: 'android-gateway-demo-device',
       },
     ],
-    messages: [
-      m('+989121112233', 'in', 'Hey Amir, can you send the GoToSafar itinerary link before the meeting?', 220),
-      m('+989121112233', 'out', 'Sure, I will send the link and the latest UI preview in a minute.', 216),
-      m('+989121112233', 'in', 'Perfect. The demo flow already looks much cleaner.', 207),
-
-      m('+989353334455', 'in', 'The landing page is ready for review. Should we keep the glass cards?', 620),
-      m('+989353334455', 'out', 'Yes, keep them. I only want to reduce the padding on mobile.', 603),
-      m('+989353334455', 'in', 'Done. I pushed the mobile spacing update.', 584),
-
-      m('+989151234567', 'in', 'Reminder: presentation at 4 PM. Use the demo code so there is no Android dependency.', 1_320),
-      m('+989151234567', 'out', 'Got it. I will present with seeded conversations and contacts.', 1_306),
-
-      m('+982100004242', 'in', 'Your demo verification code is 482191. This message is fake seed data.', 2_100),
-      m('+982100004242', 'out', 'Thanks. I will not use the real SMS gateway for the presentation.', 2_080),
-
-      m('+902125551010', 'in', 'Reservation confirmed for tomorrow. Confirmation number: ATG-2048.', 3_640),
-    ],
+    messages,
+    readAtByThread,
     pushSubscriptions: [],
     telegramSessions: new Map(),
   };
@@ -236,6 +338,25 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
     const peerName = message.peerName ?? contactName(message.peer);
     state.messages.push({ ...message, peerName });
     state.messages.sort((a, b) => a.ts - b.ts);
+  };
+
+  const messageMatchesThread = (message: MessageRow, threadIdOrPeer: string) => {
+    const tid = message.threadId || threadIdFor(message.peer);
+    const { norm, tail } = normalizePhone(message.peer);
+    return tid === threadIdOrPeer || message.peer === threadIdOrPeer || norm === threadIdOrPeer || tail === threadIdOrPeer;
+  };
+
+  const unreadCountForThread = (threadId: string) => {
+    const readAt = state.readAtByThread.get(threadId) ?? 0;
+    return state.messages.filter((m) => (m.threadId || threadIdFor(m.peer)) === threadId && m.direction === 'in' && m.ts > readAt).length;
+  };
+
+  const markDemoThreadRead = (threadIdOrPeer: string) => {
+    const messages = state.messages.filter((m) => messageMatchesThread(m, threadIdOrPeer));
+    if (!messages.length) return;
+    const thread = messages[messages.length - 1].threadId || threadIdFor(messages[messages.length - 1].peer);
+    const latestTs = Math.max(...messages.map((m) => m.ts));
+    state.readAtByThread.set(thread, Math.max(Date.now() + 10_000, latestTs + 1));
   };
 
   const repo: Repo = {
@@ -451,7 +572,7 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
             lastTs: msg.ts,
             lastPreview: safePreview(msg.body, msg.bodyIsEncrypted),
             lastBodyIsEncrypted: msg.bodyIsEncrypted,
-            unreadCount: msg.direction === 'in' ? 1 : 0,
+            unreadCount: unreadCountForThread(msg.threadId || threadIdFor(msg.peer)),
           }));
       }
       return useReal('listConversations', pairingId, limit);
@@ -466,6 +587,14 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
         return { peer: msg.peer, peerName: msg.peerName ?? contactName(msg.peer) };
       }
       return useReal('resolvePeerByThreadId', pairingId, threadId);
+    },
+
+    async markThreadRead(pairingId: string, threadId: string) {
+      if (isDemoPairing(cfg, pairingId)) {
+        markDemoThreadRead(threadId);
+        return { ok: true as const };
+      }
+      return useReal('markThreadRead', pairingId, threadId);
     },
 
     async insertMessage(input: {
@@ -518,11 +647,7 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
       if (isDemoPairing(cfg, pairingId)) {
         const thread = threadIdOrPeer;
         return state.messages
-          .filter((m) => {
-            const tid = m.threadId || threadIdFor(m.peer);
-            const { norm, tail } = normalizePhone(m.peer);
-            return tid === thread || m.peer === thread || norm === thread || tail === thread;
-          })
+          .filter((m) => messageMatchesThread(m, thread))
           .sort((a, b) => a.ts - b.ts)
           .slice(-limit)
           .map((m) => ({ ...m, peerName: m.peerName ?? contactName(m.peer) }));
