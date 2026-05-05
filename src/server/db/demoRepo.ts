@@ -238,7 +238,7 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
     state.messages.sort((a, b) => a.ts - b.ts);
   };
 
-  const repo = {
+  const repo: Repo = {
     async upsertGatewayDevice(gatewayDeviceId: string) {
       if (isDemoGateway(cfg, gatewayDeviceId)) return;
       return useReal('upsertGatewayDevice', gatewayDeviceId);
