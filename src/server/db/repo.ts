@@ -119,7 +119,7 @@ export function createRepo(pool: Pool) {
 
   async function gatewayDeviceExists(gatewayDeviceId: string): Promise<boolean> {
     const r = await pool.query('SELECT 1 FROM gateway_devices WHERE id = $1 LIMIT 1', [gatewayDeviceId]);
-    return r.rowCount > 0;
+    return (r.rowCount ?? 0) > 0;
   }
 
   // ---------------- telegram sessions ----------------
