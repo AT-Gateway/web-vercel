@@ -1,0 +1,5 @@
+{
+  "installCommand": "yarn install --non-interactive",
+  "buildCommand": "yarn build",
+  "devCommand": "yarn dev"
+}
