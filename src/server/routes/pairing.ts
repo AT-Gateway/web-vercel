@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import type { AppConfig } from '../config.js';
-import type { createRepo } from '../db/repo.js';
-import { gen6DigitCode, genPairToken } from '../utils/ids.js';
+import type { AppConfig } from '../config';
+import type { createRepo } from '../db/repo';
+import { gen6DigitCode, genPairToken } from '../utils/ids';
 
 export async function registerPairingRoutes(app: FastifyInstance, cfg: AppConfig, repo: ReturnType<typeof createRepo>) {
   // Admin: Android sets a short-lived code on the server.

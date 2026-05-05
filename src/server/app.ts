@@ -2,23 +2,23 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import type { Pool } from 'pg';
 
-import { loadConfig, type AppConfig } from './config.js';
-import { createPool } from './db/pool.js';
-import { applyMigrationsFromSql } from './db/migrate.js';
-import { MIGRATIONS } from './db/migrations.js';
-import { createRepo } from './db/repo.js';
-import { createDemoAwareRepo } from './db/demoRepo.js';
-import { SseHub } from './realtime/sseHub.js';
-import { initWebPush } from './services/push.js';
+import { loadConfig, type AppConfig } from './config';
+import { createPool } from './db/pool';
+import { applyMigrationsFromSql } from './db/migrate';
+import { MIGRATIONS } from './db/migrations';
+import { createRepo } from './db/repo';
+import { createDemoAwareRepo } from './db/demoRepo';
+import { SseHub } from './realtime/sseHub';
+import { initWebPush } from './services/push';
 
-import './types.js';
-import { registerHealthRoutes } from './routes/health.js';
-import { registerPairingRoutes } from './routes/pairing.js';
-import { registerSmsRoutes } from './routes/sms.js';
-import { registerContactsRoutes } from './routes/contacts.js';
-import { registerPushRoutes } from './routes/push.js';
-import { registerAndroidRoutes } from './routes/android.js';
-import { registerTelegramRoutes } from './routes/telegram.js';
+import './types';
+import { registerHealthRoutes } from './routes/health';
+import { registerPairingRoutes } from './routes/pairing';
+import { registerSmsRoutes } from './routes/sms';
+import { registerContactsRoutes } from './routes/contacts';
+import { registerPushRoutes } from './routes/push';
+import { registerAndroidRoutes } from './routes/android';
+import { registerTelegramRoutes } from './routes/telegram';
 
 export type ApiRuntime = {
   app: FastifyInstance;

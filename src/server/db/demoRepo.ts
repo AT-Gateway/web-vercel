@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { AppConfig } from '../config.js';
+import type { AppConfig } from '../config';
 import type {
   ConversationRow,
   DeviceType,
@@ -13,8 +13,8 @@ import type {
   PairingRow,
   TelegramSession,
   createRepo,
-} from './repo.js';
-import { normalizePhone } from '../utils/phone.js';
+} from './repo';
+import { normalizePhone } from '../utils/phone';
 
 type Repo = ReturnType<typeof createRepo>;
 type DemoConfig = AppConfig['demo'];

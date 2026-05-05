@@ -1,5 +1,5 @@
 import 'fastify';
-import type { PairAuth } from './db/repo.js';
+import type { PairAuth } from './db/repo';
 
 declare module 'fastify' {
   interface FastifyRequest {

@@ -1,5 +1,5 @@
-import { getApiRuntime } from './app.js';
-import { startTelegramPoller } from './telegram/poller.js';
+import { getApiRuntime } from './app';
+import { startTelegramPoller } from './telegram/poller';
 
 async function main() {
   const runtime = await getApiRuntime();

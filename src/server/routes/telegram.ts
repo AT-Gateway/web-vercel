@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify';
-import type { AppConfig } from '../config.js';
-import type { createRepo } from '../db/repo.js';
-import type { SseHub } from '../realtime/sseHub.js';
-import { handleTelegramUpdate } from '../telegram/handleUpdate.js';
+import type { AppConfig } from '../config';
+import type { createRepo } from '../db/repo';
+import type { SseHub } from '../realtime/sseHub';
+import { handleTelegramUpdate } from '../telegram/handleUpdate';
 
 export async function registerTelegramRoutes(
     app: FastifyInstance,

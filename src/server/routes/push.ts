@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import type { AppConfig } from '../config.js';
-import type { createRepo } from '../db/repo.js';
+import type { AppConfig } from '../config';
+import type { createRepo } from '../db/repo';
 
 export async function registerPushRoutes(app: FastifyInstance, cfg: AppConfig, repo: ReturnType<typeof createRepo>) {
   app.post('/api/push/subscribe', async (req, reply) => {

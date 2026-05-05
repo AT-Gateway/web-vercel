@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
-import type { createRepo } from '../db/repo.js';
-import type { SseHub } from '../realtime/sseHub.js';
+import type { createRepo } from '../db/repo';
+import type { SseHub } from '../realtime/sseHub';
 
 export async function registerSmsRoutes(app: FastifyInstance, repo: ReturnType<typeof createRepo>, hub: SseHub) {
   app.get('/api/sms/conversations', async (req) => {

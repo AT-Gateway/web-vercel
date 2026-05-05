@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { AppConfig } from '../config.js';
+import type { AppConfig } from '../config';
 
 export async function registerHealthRoutes(app: FastifyInstance, cfg: AppConfig) {
   app.get('/api/health', async () => {

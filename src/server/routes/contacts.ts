@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import type { createRepo } from '../db/repo.js';
+import type { createRepo } from '../db/repo';
 
 export async function registerContactsRoutes(app: FastifyInstance, repo: ReturnType<typeof createRepo>) {
   app.get('/api/contacts', async (req) => {

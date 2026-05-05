@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
-import { normalizePhone, safePreview } from '../utils/phone.js';
+import { normalizePhone, safePreview } from '../utils/phone';
 
 export type DeviceType = 'pwa' | 'telegram' | 'android' | 'other';
 export type MessageDirection = 'in' | 'out';

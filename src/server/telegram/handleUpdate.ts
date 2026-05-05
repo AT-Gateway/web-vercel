@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import type { AppConfig } from '../config.js';
-import type { createRepo } from '../db/repo.js';
-import type { SseHub } from '../realtime/sseHub.js';
+import type { AppConfig } from '../config';
+import type { createRepo } from '../db/repo';
+import type { SseHub } from '../realtime/sseHub';
 import {
     parseTelegramText,
     telegramAnswerCallback,
     telegramHelpText,
     telegramSend,
-} from '../services/telegram.js';
+} from '../services/telegram';
 
 function fmtSim(simSlotIndex: number | null) {
     if (simSlotIndex === 0) return 'SIM1';

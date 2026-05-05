@@ -1,7 +1,7 @@
-import { loadConfig } from '../config.js';
-import { createPool } from './pool.js';
-import { applyMigrationsFromSql } from './migrate.js';
-import { MIGRATIONS } from './migrations.js';
+import { loadConfig } from '../config';
+import { createPool } from './pool';
+import { applyMigrationsFromSql } from './migrate';
+import { MIGRATIONS } from './migrations';
 
 const cfg = loadConfig();
 
