@@ -24,6 +24,12 @@ import {
     pushSubscribe,
     revokeDevice,
     sendSms,
+    telegramCreateLinkCode,
+    telegramSetAlerts,
+    telegramSetupWebhook,
+    type TelegramStatusRes,
+    telegramStatus,
+    telegramTest,
     vapidPublicKey,
 } from "@/lib/api";
 import { threadIdForPeer } from "@/lib/phone";
@@ -209,6 +215,218 @@ function useIsMobile(breakpointPx = 860) {
     return isMobile;
 }
 
+type TelegramSettingsPanelProps = {
+    compact?: boolean;
+    status: TelegramStatusRes | null;
+    loading: boolean;
+    actionLoading: boolean;
+    linkCode: { code: string; expiresAt: number; botDeepLink: string | null } | null;
+    onRefresh: () => void;
+    onToggle: (active: boolean) => void;
+    onCreateLink: () => void;
+    onSetupWebhook: () => void;
+    onTest: () => void;
+};
+
+function TelegramSettingsPanel({
+    compact = false,
+    status,
+    loading,
+    actionLoading,
+    linkCode,
+    onRefresh,
+    onToggle,
+    onCreateLink,
+    onSetupWebhook,
+    onTest,
+}: TelegramSettingsPanelProps) {
+    const configured = Boolean(status?.configured);
+    const serverEnabled = Boolean(status?.enabled);
+    const alertsEnabled = Boolean(status?.alertsEnabled);
+    const connectedChats = status?.subscribers?.length ?? 0;
+    const activeChats = status?.subscribers?.filter((s) => s.enabled).length ?? 0;
+    const disabled = loading || actionLoading || !configured;
+    const freshLinkCode = linkCode && linkCode.expiresAt > Date.now() ? linkCode : null;
+
+    const pillClass = cn(
+        "rounded-full border px-3 py-1 text-xs font-semibold",
+        serverEnabled && alertsEnabled
+            ? "border-emerald-400/30 bg-emerald-500/15 text-emerald-100"
+            : "border-amber-400/30 bg-amber-500/15 text-amber-100"
+    );
+
+    if (compact) {
+        return (
+            <div className="flex w-full flex-col gap-3">
+                <div className="flex w-full items-center justify-between gap-2">
+                    <div className="flex flex-col gap-1">
+                        <div className="text-lg font-semibold">Telegram Bot:</div>
+                        <div className="text-sm text-white/55">
+                            {loading
+                                ? "Checking..."
+                                : !configured
+                                  ? "Missing bot token"
+                                  : serverEnabled
+                                    ? `${activeChats}/${connectedChats} chat(s) active`
+                                    : "Server disabled"}
+                        </div>
+                    </div>
+
+                    <div className="relative flex items-center space-x-2">
+                        <Label>Inactive</Label>
+                        <GlassSwitch
+                            checked={alertsEnabled && configured}
+                            onCheckedChange={onToggle}
+                            disabled={disabled}
+                        />
+                        <Label>Active</Label>
+                    </div>
+                </div>
+
+                {!connectedChats && configured ? (
+                    <button
+                        type="button"
+                        onClick={onCreateLink}
+                        disabled={actionLoading}
+                        className="rounded-full border border-sky-400/30 bg-sky-500/15 px-4 py-2 text-sm font-semibold text-sky-100 transition hover:bg-sky-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        Generate Telegram link code
+                    </button>
+                ) : null}
+            </div>
+        );
+    }
+
+    return (
+        <div className="flex w-full flex-col gap-3">
+            <div className="flex w-full items-center justify-between gap-3">
+                <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2 text-lg font-semibold">
+                        <span>Telegram Bot</span>
+                        <span className={pillClass}>
+                            {serverEnabled && alertsEnabled ? "Active" : "Inactive"}
+                        </span>
+                    </div>
+                    <div className="text-sm text-white/60">
+                        Receive new SMS messages in Telegram and reply from the bot.
+                    </div>
+                </div>
+
+                <div className="relative flex items-center space-x-2">
+                    <Label>Inactive</Label>
+                    <GlassSwitch
+                        checked={alertsEnabled && configured}
+                        onCheckedChange={onToggle}
+                        disabled={disabled}
+                    />
+                    <Label>Active</Label>
+                </div>
+            </div>
+
+            <div className="grid w-full grid-cols-1 gap-2 text-sm text-white/70 sm:grid-cols-2">
+                <div className="rounded-3xl border border-white/15 bg-white/5 p-3">
+                    <div className="text-white/45">Server</div>
+                    <div className="font-semibold text-white">
+                        {!configured
+                            ? "Missing TELEGRAM_BOT_TOKEN"
+                            : serverEnabled
+                              ? "Enabled"
+                              : "Needs webhook/env setup"}
+                    </div>
+                </div>
+                <div className="rounded-3xl border border-white/15 bg-white/5 p-3">
+                    <div className="text-white/45">Connected chats</div>
+                    <div className="font-semibold text-white">
+                        {activeChats}/{connectedChats} active
+                        {status?.legacyAllowedChatIds ? ` · ${status.legacyAllowedChatIds} env` : ""}
+                    </div>
+                </div>
+            </div>
+
+            {status?.subscribers?.length ? (
+                <div className="flex w-full flex-col gap-2 rounded-3xl border border-white/15 bg-white/5 p-3 text-sm text-white/70">
+                    <div className="font-semibold text-white">Linked Telegram chats</div>
+                    {status.subscribers.map((s) => (
+                        <div key={s.chatId} className="flex items-center justify-between gap-2">
+                            <span className="truncate">{s.label}</span>
+                            <span
+                                className={cn(
+                                    "rounded-full px-2 py-0.5 text-xs",
+                                    s.enabled
+                                        ? "bg-emerald-500/15 text-emerald-100"
+                                        : "bg-white/10 text-white/50"
+                                )}
+                            >
+                                {s.enabled ? "active" : "paused"}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            ) : null}
+
+            {freshLinkCode ? (
+                <div className="rounded-3xl border border-sky-400/25 bg-sky-500/10 p-4 text-sm text-sky-50">
+                    <div className="mb-1 font-semibold">Link code</div>
+                    <div className="mb-2 text-3xl font-black tracking-[0.35em]">{freshLinkCode.code}</div>
+                    <div className="text-sky-100/80">
+                        Send <b>/link {freshLinkCode.code}</b> to your Telegram bot before{" "}
+                        {new Date(freshLinkCode.expiresAt).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                        })}
+                        .
+                    </div>
+                    {freshLinkCode.botDeepLink ? (
+                        <a
+                            href={freshLinkCode.botDeepLink}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-3 inline-flex rounded-full border border-sky-300/30 bg-sky-400/15 px-4 py-2 font-semibold text-sky-50"
+                        >
+                            Open Telegram bot
+                        </a>
+                    ) : null}
+                </div>
+            ) : null}
+
+            <div className="flex flex-wrap gap-2">
+                <button
+                    type="button"
+                    onClick={onCreateLink}
+                    disabled={!configured || actionLoading}
+                    className="rounded-full border border-sky-400/30 bg-sky-500/15 px-4 py-2 text-sm font-semibold text-sky-100 transition hover:bg-sky-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                    Generate link code
+                </button>
+                <button
+                    type="button"
+                    onClick={onSetupWebhook}
+                    disabled={!configured || actionLoading}
+                    className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                    Setup webhook
+                </button>
+                <button
+                    type="button"
+                    onClick={onTest}
+                    disabled={!serverEnabled || !alertsEnabled || actionLoading}
+                    className="rounded-full border border-emerald-400/30 bg-emerald-500/15 px-4 py-2 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                    Send test
+                </button>
+                <button
+                    type="button"
+                    onClick={onRefresh}
+                    disabled={loading || actionLoading}
+                    className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-white/80 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                    Refresh
+                </button>
+            </div>
+        </div>
+    );
+}
+
 function groupByDay(
     msgs: Message[]
 ): Array<{ day: string; ts: number; items: Message[] }> {
@@ -253,6 +471,16 @@ export default function ClientView() {
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [devices, setDevices] = useState<DeviceRow[]>([]);
     const [devicesLoading, setDevicesLoading] = useState(false);
+
+    const [telegramStatusState, setTelegramStatusState] =
+        useState<TelegramStatusRes | null>(null);
+    const [telegramLoading, setTelegramLoading] = useState(false);
+    const [telegramActionLoading, setTelegramActionLoading] = useState(false);
+    const [telegramLinkCode, setTelegramLinkCode] = useState<{
+        code: string;
+        expiresAt: number;
+        botDeepLink: string | null;
+    } | null>(null);
 
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [conversationsLoading, setConversationsLoading] = useState<boolean>(false);
@@ -346,6 +574,82 @@ export default function ClientView() {
         }
     }, [pairState, showToast]);
 
+    const loadTelegramStatus = useCallback(async () => {
+        if (!pairState) return;
+
+        setTelegramLoading(true);
+        try {
+            const r = await telegramStatus(pairState.pairToken);
+            setTelegramStatusState(r);
+        } catch (e: any) {
+            showToast("Failed to load Telegram", e?.message);
+        } finally {
+            setTelegramLoading(false);
+        }
+    }, [pairState, showToast]);
+
+    const toggleTelegramAlerts = useCallback(
+        async (active: boolean) => {
+            if (!pairState) return;
+            setTelegramActionLoading(true);
+            try {
+                await telegramSetAlerts(pairState.pairToken, active);
+                await loadTelegramStatus();
+                showToast(active ? "Telegram activated" : "Telegram deactivated");
+            } catch (e: any) {
+                showToast("Failed to update Telegram", e?.message);
+            } finally {
+                setTelegramActionLoading(false);
+            }
+        },
+        [pairState, loadTelegramStatus, showToast]
+    );
+
+    const createTelegramLink = useCallback(async () => {
+        if (!pairState) return;
+        setTelegramActionLoading(true);
+        try {
+            const r = await telegramCreateLinkCode(pairState.pairToken);
+            setTelegramLinkCode({
+                code: r.code,
+                expiresAt: r.expiresAt,
+                botDeepLink: r.botDeepLink,
+            });
+            showToast("Telegram link code created", `Send /link ${r.code} to your bot.`);
+        } catch (e: any) {
+            showToast("Failed to create link code", e?.message);
+        } finally {
+            setTelegramActionLoading(false);
+        }
+    }, [pairState, showToast]);
+
+    const setupTelegramWebhook = useCallback(async () => {
+        if (!pairState) return;
+        setTelegramActionLoading(true);
+        try {
+            const r = await telegramSetupWebhook(pairState.pairToken);
+            await loadTelegramStatus();
+            showToast("Telegram webhook ready", r.botUsername ? `@${r.botUsername}` : undefined);
+        } catch (e: any) {
+            showToast("Webhook setup failed", e?.message);
+        } finally {
+            setTelegramActionLoading(false);
+        }
+    }, [pairState, loadTelegramStatus, showToast]);
+
+    const testTelegram = useCallback(async () => {
+        if (!pairState) return;
+        setTelegramActionLoading(true);
+        try {
+            const r = await telegramTest(pairState.pairToken);
+            showToast("Telegram test sent", `${r.results?.filter((x: any) => x.ok).length ?? 0} chat(s) reached.`);
+        } catch (e: any) {
+            showToast("Telegram test failed", e?.message);
+        } finally {
+            setTelegramActionLoading(false);
+        }
+    }, [pairState, showToast]);
+
     const doRevoke = useCallback(
         async (deviceId: string) => {
             if (!pairState) return;
@@ -380,6 +684,12 @@ export default function ClientView() {
         // optional: some drawers close on Escape
         document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     }, []);
+
+    useEffect(() => {
+        if (!settingsOpen || !pairState) return;
+        loadDevices();
+        loadTelegramStatus();
+    }, [settingsOpen, pairState, loadDevices, loadTelegramStatus]);
 
     useEffect(() => {
         if (!stickToBottomRef.current) return;
@@ -801,9 +1111,7 @@ export default function ClientView() {
         [pairState?.pairToken]
     );
 
-    const isDemoMode = Boolean(
-        pairState?.demo || pairState?.pairToken?.startsWith("demo:")
-    );
+    const isDemoMode = Boolean(pairState?.demo || pairState?.pairToken?.startsWith('demo:'));
 
     const showConversationSkeletons =
         conversations.length === 0 && (pairLoading || conversationsLoading);
@@ -862,6 +1170,7 @@ export default function ClientView() {
                                     onClick={() => {
                                         setSettingsOpen(true);
                                         loadDevices();
+                                        loadTelegramStatus();
                                     }}
                                     className={cn(
                                         "flex h-10 w-10 min-w-10 cursor-pointer items-center justify-center",
@@ -958,23 +1267,18 @@ export default function ClientView() {
 
                                     <span className="h-0 w-full bg-linear-to-r from-transparent via-white/50 to-transparent py-px" />
 
-                                    <div className="flex w-full items-center justify-between gap-2">
-                                        <div className="text-lg font-semibold">
-                                            Telegram Bot:
-                                        </div>
-
-                                        <div className="relative flex items-center space-x-2">
-                                            <span className="absolute top-0 left-0 z-99 h-full w-full cursor-not-allowed" />
-                                            <Label htmlFor="airplane-mode">
-                                                Inactive
-                                            </Label>
-                                            <GlassSwitch
-                                                checked={true}
-                                                onCheckedChange={() => {}}
-                                            />
-                                            <Label htmlFor="airplane-mode">Active</Label>
-                                        </div>
-                                    </div>
+                                    <TelegramSettingsPanel
+                                        compact
+                                        status={telegramStatusState}
+                                        loading={telegramLoading}
+                                        actionLoading={telegramActionLoading}
+                                        linkCode={telegramLinkCode}
+                                        onRefresh={loadTelegramStatus}
+                                        onToggle={toggleTelegramAlerts}
+                                        onCreateLink={createTelegramLink}
+                                        onSetupWebhook={setupTelegramWebhook}
+                                        onTest={testTelegram}
+                                    />
                                 </div>
                             </div>
                         </DrawerContainer>
@@ -998,6 +1302,7 @@ export default function ClientView() {
                                     onClick={() => {
                                         setSettingsOpen(true);
                                         loadDevices();
+                                        loadTelegramStatus();
                                     }}
                                     className={cn(
                                         "flex h-10 w-10 min-w-10 cursor-pointer items-center justify-center",
@@ -1081,6 +1386,20 @@ export default function ClientView() {
                                             </div>
                                         </div>
                                     </div>
+
+                                    <span className="h-0 w-full bg-linear-to-r from-transparent via-white/50 to-transparent py-px" />
+
+                                    <TelegramSettingsPanel
+                                        status={telegramStatusState}
+                                        loading={telegramLoading}
+                                        actionLoading={telegramActionLoading}
+                                        linkCode={telegramLinkCode}
+                                        onRefresh={loadTelegramStatus}
+                                        onToggle={toggleTelegramAlerts}
+                                        onCreateLink={createTelegramLink}
+                                        onSetupWebhook={setupTelegramWebhook}
+                                        onTest={testTelegram}
+                                    />
 
                                     <span className="h-0 w-full bg-linear-to-r from-transparent via-white/50 to-transparent py-px" />
 
@@ -1740,10 +2059,7 @@ function PairingScreen(props: {
                     demo: Boolean(res.demo),
                 });
                 if (res.demo) {
-                    props.onToast(
-                        "Demo mode",
-                        "Seeded contacts and fake SMS data loaded."
-                    );
+                    props.onToast("Demo mode", "Seeded contacts and fake SMS data loaded.");
                 }
             } catch (e: any) {
                 props.onToast("Pairing failed", e?.message);
@@ -1812,7 +2128,7 @@ function PairingScreen(props: {
 
                 <button
                     type="button"
-                    className="mt-2 cursor-pointer rounded-full border border-emerald-400/30 bg-emerald-500/15 px-6 py-2 text-sm text-emerald-100 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="cursor-pointer mt-2 rounded-full border border-emerald-400/30 bg-emerald-500/15 px-6 py-2 text-sm text-emerald-100 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={() => {
                         setCode(demoCode);
                         void doPair(demoCode);

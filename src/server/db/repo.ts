@@ -88,6 +88,25 @@ export type TelegramSession = {
   defaultSimSlotIndex: number | null;
 };
 
+export type TelegramChatSubscription = {
+  pairingId: string;
+  gatewayDeviceId: string;
+  chatId: string;
+  chatType: string | null;
+  username: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type TelegramPairingSettings = {
+  pairingId: string;
+  alertsEnabled: boolean;
+  updatedAt: number | null;
+};
+
 export function createRepo(pool: Pool) {
   // ---------------- gateway devices ----------------
   async function upsertGatewayDevice(gatewayDeviceId: string) {
@@ -175,6 +194,177 @@ export function createRepo(pool: Pool) {
         session.defaultSimSlotIndex,
       ]
     );
+  }
+
+  async function getTelegramPairingSettings(pairingId: string): Promise<TelegramPairingSettings> {
+    const r = await pool.query(
+      `
+      SELECT pairing_id, alerts_enabled, EXTRACT(EPOCH FROM updated_at) * 1000 AS updated_at_ms
+      FROM telegram_pairing_settings
+      WHERE pairing_id = $1
+      `,
+      [pairingId]
+    );
+    const row = r.rows[0] as any;
+    if (!row) return { pairingId, alertsEnabled: true, updatedAt: null };
+    return {
+      pairingId: String(row.pairing_id),
+      alertsEnabled: row.alerts_enabled !== false,
+      updatedAt: row.updated_at_ms ? Number(row.updated_at_ms) : null,
+    };
+  }
+
+  async function setTelegramPairingSettings(pairingId: string, alertsEnabled: boolean): Promise<TelegramPairingSettings> {
+    const r = await pool.query(
+      `
+      INSERT INTO telegram_pairing_settings(pairing_id, alerts_enabled, updated_at)
+      VALUES ($1, $2, now())
+      ON CONFLICT (pairing_id) DO UPDATE SET
+        alerts_enabled = EXCLUDED.alerts_enabled,
+        updated_at = now()
+      RETURNING pairing_id, alerts_enabled, EXTRACT(EPOCH FROM updated_at) * 1000 AS updated_at_ms
+      `,
+      [pairingId, alertsEnabled]
+    );
+    const row = r.rows[0] as any;
+    return {
+      pairingId: String(row.pairing_id),
+      alertsEnabled: row.alerts_enabled !== false,
+      updatedAt: row.updated_at_ms ? Number(row.updated_at_ms) : null,
+    };
+  }
+
+  async function createTelegramLinkCode(pairingId: string, code: string, ttlMs: number): Promise<{ code: string; expiresAt: number }> {
+    const expiresAtDate = new Date(Date.now() + ttlMs);
+    await pool.query('DELETE FROM telegram_link_codes WHERE expires_at < now()');
+    await pool.query(
+      `
+      INSERT INTO telegram_link_codes(code, pairing_id, expires_at)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (code) DO UPDATE SET
+        pairing_id = EXCLUDED.pairing_id,
+        created_at = now(),
+        expires_at = EXCLUDED.expires_at
+      `,
+      [code, pairingId, expiresAtDate]
+    );
+    return { code, expiresAt: expiresAtDate.getTime() };
+  }
+
+  async function consumeTelegramLinkCode(code: string): Promise<
+    | { ok: true; pairingId: string }
+    | { ok: false; reason: 'invalid' | 'expired' }
+  > {
+    const r = await pool.query(
+      `
+      DELETE FROM telegram_link_codes
+      WHERE code = $1
+      RETURNING pairing_id, EXTRACT(EPOCH FROM expires_at) * 1000 AS expires_at_ms
+      `,
+      [code]
+    );
+    const row = r.rows[0] as any;
+    if (!row) return { ok: false, reason: 'invalid' };
+    const expiresAt = Number(row.expires_at_ms);
+    if (expiresAt < Date.now()) return { ok: false, reason: 'expired' };
+    return { ok: true, pairingId: String(row.pairing_id) };
+  }
+
+  async function upsertTelegramSubscription(input: {
+    pairingId: string;
+    chatId: string;
+    chatType?: string | null;
+    username?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+    enabled?: boolean;
+  }) {
+    await pool.query(
+      `
+      INSERT INTO telegram_chat_subscriptions(
+        pairing_id, chat_id, chat_type, username, first_name, last_name, enabled, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, true), now())
+      ON CONFLICT (pairing_id, chat_id) DO UPDATE SET
+        chat_type = EXCLUDED.chat_type,
+        username = EXCLUDED.username,
+        first_name = EXCLUDED.first_name,
+        last_name = EXCLUDED.last_name,
+        enabled = COALESCE($7, telegram_chat_subscriptions.enabled, true),
+        updated_at = now()
+      `,
+      [
+        input.pairingId,
+        input.chatId,
+        input.chatType ?? null,
+        input.username ?? null,
+        input.firstName ?? null,
+        input.lastName ?? null,
+        input.enabled ?? null,
+      ]
+    );
+  }
+
+  function mapTelegramSubscription(row: any): TelegramChatSubscription {
+    return {
+      pairingId: String(row.pairing_id),
+      gatewayDeviceId: String(row.gateway_device_id),
+      chatId: String(row.chat_id),
+      chatType: row.chat_type ? String(row.chat_type) : null,
+      username: row.username ? String(row.username) : null,
+      firstName: row.first_name ? String(row.first_name) : null,
+      lastName: row.last_name ? String(row.last_name) : null,
+      enabled: row.enabled !== false,
+      createdAt: Number(row.created_at_ms),
+      updatedAt: Number(row.updated_at_ms),
+    };
+  }
+
+  async function listTelegramSubscriptions(pairingId: string): Promise<TelegramChatSubscription[]> {
+    const r = await pool.query(
+      `
+      SELECT s.*, p.gateway_device_id,
+             EXTRACT(EPOCH FROM s.created_at) * 1000 AS created_at_ms,
+             EXTRACT(EPOCH FROM s.updated_at) * 1000 AS updated_at_ms
+      FROM telegram_chat_subscriptions s
+      JOIN pairings p ON p.id = s.pairing_id
+      WHERE s.pairing_id = $1
+      ORDER BY s.updated_at DESC
+      `,
+      [pairingId]
+    );
+    return r.rows.map(mapTelegramSubscription);
+  }
+
+  async function listTelegramSubscriptionsForChat(chatId: string): Promise<TelegramChatSubscription[]> {
+    const r = await pool.query(
+      `
+      SELECT s.*, p.gateway_device_id,
+             EXTRACT(EPOCH FROM s.created_at) * 1000 AS created_at_ms,
+             EXTRACT(EPOCH FROM s.updated_at) * 1000 AS updated_at_ms
+      FROM telegram_chat_subscriptions s
+      JOIN pairings p ON p.id = s.pairing_id
+      WHERE s.chat_id = $1
+      ORDER BY s.enabled DESC, s.updated_at DESC
+      `,
+      [chatId]
+    );
+    return r.rows.map(mapTelegramSubscription);
+  }
+
+  async function setTelegramSubscriptionEnabled(pairingId: string, chatId: string, enabled: boolean) {
+    await pool.query(
+      `
+      UPDATE telegram_chat_subscriptions
+      SET enabled = $3, updated_at = now()
+      WHERE pairing_id = $1 AND chat_id = $2
+      `,
+      [pairingId, chatId, enabled]
+    );
+  }
+
+  async function deleteTelegramSubscription(pairingId: string, chatId: string) {
+    await pool.query('DELETE FROM telegram_chat_subscriptions WHERE pairing_id = $1 AND chat_id = $2', [pairingId, chatId]);
   }
 
   // ---------------- pairings ----------------
@@ -1145,6 +1335,15 @@ export function createRepo(pool: Pool) {
     // telegram
     getTelegramSession,
     setTelegramSession,
+    getTelegramPairingSettings,
+    setTelegramPairingSettings,
+    createTelegramLinkCode,
+    consumeTelegramLinkCode,
+    upsertTelegramSubscription,
+    listTelegramSubscriptions,
+    listTelegramSubscriptionsForChat,
+    setTelegramSubscriptionEnabled,
+    deleteTelegramSubscription,
 
     // outbox
     enqueueOutboundMessage,

@@ -11,6 +11,8 @@ import type {
   OutboxItem,
   PairAuth,
   PairingRow,
+  TelegramChatSubscription,
+  TelegramPairingSettings,
   TelegramSession,
   createRepo,
 } from './repo';
@@ -43,6 +45,9 @@ type DemoState = {
   readAtByThread: Map<string, number>;
   pushSubscriptions: Array<{ deviceId: string; subscription: any }>;
   telegramSessions: Map<string, TelegramSession>;
+  telegramPairingSettings: Map<string, TelegramPairingSettings>;
+  telegramLinkCodes: Map<string, { pairingId: string; expiresAt: number }>;
+  telegramSubscriptions: TelegramChatSubscription[];
 };
 
 function isDemoPairing(cfg: DemoConfig, pairingId: string | null | undefined) {
@@ -272,6 +277,9 @@ function makeDemoState(cfg: DemoConfig): DemoState {
     readAtByThread,
     pushSubscriptions: [],
     telegramSessions: new Map(),
+    telegramPairingSettings: new Map(),
+    telegramLinkCodes: new Map(),
+    telegramSubscriptions: [],
   };
 }
 
@@ -678,6 +686,106 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
     async setTelegramSession(session: TelegramSession) {
       if (realRepo) return realRepo.setTelegramSession(session);
       state.telegramSessions.set(session.chatId, session);
+    },
+
+    async getTelegramPairingSettings(pairingId: string) {
+      if (realRepo && !isDemoPairing(cfg, pairingId)) return realRepo.getTelegramPairingSettings(pairingId);
+      return (
+        state.telegramPairingSettings.get(pairingId) ?? {
+          pairingId,
+          alertsEnabled: true,
+          updatedAt: null,
+        }
+      );
+    },
+
+    async setTelegramPairingSettings(pairingId: string, alertsEnabled: boolean) {
+      if (realRepo && !isDemoPairing(cfg, pairingId)) return realRepo.setTelegramPairingSettings(pairingId, alertsEnabled);
+      const settings = { pairingId, alertsEnabled, updatedAt: Date.now() };
+      state.telegramPairingSettings.set(pairingId, settings);
+      return settings;
+    },
+
+    async createTelegramLinkCode(pairingId: string, code: string, ttlMs: number) {
+      if (realRepo && !isDemoPairing(cfg, pairingId)) return realRepo.createTelegramLinkCode(pairingId, code, ttlMs);
+      const expiresAt = Date.now() + ttlMs;
+      state.telegramLinkCodes.set(code, { pairingId, expiresAt });
+      return { code, expiresAt };
+    },
+
+    async consumeTelegramLinkCode(code: string) {
+      const hit = state.telegramLinkCodes.get(code);
+      if (hit) {
+        state.telegramLinkCodes.delete(code);
+        if (hit.expiresAt < Date.now()) return { ok: false as const, reason: 'expired' as const };
+        return { ok: true as const, pairingId: hit.pairingId };
+      }
+      if (realRepo) return realRepo.consumeTelegramLinkCode(code);
+      return { ok: false as const, reason: 'invalid' as const };
+    },
+
+    async upsertTelegramSubscription(input: {
+      pairingId: string;
+      chatId: string;
+      chatType?: string | null;
+      username?: string | null;
+      firstName?: string | null;
+      lastName?: string | null;
+      enabled?: boolean;
+    }) {
+      if (realRepo && !isDemoPairing(cfg, input.pairingId)) return realRepo.upsertTelegramSubscription(input);
+      const now = Date.now();
+      const existing = state.telegramSubscriptions.find(
+        (s) => s.pairingId === input.pairingId && s.chatId === input.chatId
+      );
+      if (existing) {
+        existing.chatType = input.chatType ?? null;
+        existing.username = input.username ?? null;
+        existing.firstName = input.firstName ?? null;
+        existing.lastName = input.lastName ?? null;
+        if (typeof input.enabled === 'boolean') existing.enabled = input.enabled;
+        existing.updatedAt = now;
+        return;
+      }
+      state.telegramSubscriptions.unshift({
+        pairingId: input.pairingId,
+        gatewayDeviceId: cfg.gatewayDeviceId,
+        chatId: input.chatId,
+        chatType: input.chatType ?? null,
+        username: input.username ?? null,
+        firstName: input.firstName ?? null,
+        lastName: input.lastName ?? null,
+        enabled: input.enabled ?? true,
+        createdAt: now,
+        updatedAt: now,
+      });
+    },
+
+    async listTelegramSubscriptions(pairingId: string) {
+      if (realRepo && !isDemoPairing(cfg, pairingId)) return realRepo.listTelegramSubscriptions(pairingId);
+      return state.telegramSubscriptions.filter((s) => s.pairingId === pairingId);
+    },
+
+    async listTelegramSubscriptionsForChat(chatId: string) {
+      const demoRows = state.telegramSubscriptions.filter((s) => s.chatId === chatId);
+      if (demoRows.length || !realRepo) return demoRows;
+      return realRepo.listTelegramSubscriptionsForChat(chatId);
+    },
+
+    async setTelegramSubscriptionEnabled(pairingId: string, chatId: string, enabled: boolean) {
+      if (realRepo && !isDemoPairing(cfg, pairingId)) return realRepo.setTelegramSubscriptionEnabled(pairingId, chatId, enabled);
+      const sub = state.telegramSubscriptions.find((s) => s.pairingId === pairingId && s.chatId === chatId);
+      if (sub) {
+        sub.enabled = enabled;
+        sub.updatedAt = Date.now();
+      }
+    },
+
+    async deleteTelegramSubscription(pairingId: string, chatId: string) {
+      if (realRepo && !isDemoPairing(cfg, pairingId)) return realRepo.deleteTelegramSubscription(pairingId, chatId);
+      state.telegramSubscriptions = state.telegramSubscriptions.filter(
+        (s) => !(s.pairingId === pairingId && s.chatId === chatId)
+      );
     },
 
     async enqueueOutboundMessage(input: {

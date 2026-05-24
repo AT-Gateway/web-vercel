@@ -126,11 +126,7 @@ export async function buildApiRuntime(): Promise<ApiRuntime> {
   await registerContactsRoutes(app, repo);
   await registerPushRoutes(app, cfg, repo);
 
-  const telegramCfgs = cfg.telegram.enabled
-      ? cfg.telegram.allowedChatIds.map((chatId) => ({ botToken: cfg.telegram.botToken!, chatId }))
-      : [];
-
-  await registerAndroidRoutes(app, cfg, repo, hub, telegramCfgs);
+  await registerAndroidRoutes(app, cfg, repo, hub);
   await registerTelegramRoutes(app, cfg, repo, hub);
 
   await app.ready();

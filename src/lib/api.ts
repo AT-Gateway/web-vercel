@@ -57,6 +57,26 @@ export type ListContactsRes = ApiOk<{
     contacts: Array<{ displayName: string; rawNumber: string | null; norm: string }>;
 }>;
 
+export type TelegramStatusRes = ApiOk<{
+    configured: boolean;
+    enabled: boolean;
+    featureEnabled: boolean;
+    mode: 'webhook' | 'polling';
+    webhookConfigured: boolean;
+    botUsername: string | null;
+    alertsEnabled: boolean;
+    subscribers: Array<{
+        chatId: string;
+        label: string;
+        username: string | null;
+        firstName: string | null;
+        lastName: string | null;
+        enabled: boolean;
+        updatedAt: number;
+    }>;
+    legacyAllowedChatIds: number;
+}>;
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
 function url(path: string): string {
@@ -218,6 +238,37 @@ export async function pushSubscribe(
         pairToken,
         body: JSON.stringify({ deviceId, subscription }),
     });
+}
+
+export async function telegramStatus(pairToken: string): Promise<TelegramStatusRes> {
+    return apiFetch('/api/telegram/status', { pairToken });
+}
+
+export async function telegramSetAlerts(
+    pairToken: string,
+    alertsEnabled: boolean
+): Promise<ApiOk<{ alertsEnabled: boolean }>> {
+    return apiFetch('/api/telegram/settings', {
+        method: 'POST',
+        pairToken,
+        body: JSON.stringify({ alertsEnabled }),
+    });
+}
+
+export async function telegramCreateLinkCode(
+    pairToken: string
+): Promise<ApiOk<{ code: string; expiresAt: number; botDeepLink: string | null }>> {
+    return apiFetch('/api/telegram/link-code', { method: 'POST', pairToken });
+}
+
+export async function telegramSetupWebhook(
+    pairToken: string
+): Promise<ApiOk<{ webhookUrl: string; botUsername: string | null }>> {
+    return apiFetch('/api/telegram/setup-webhook', { method: 'POST', pairToken });
+}
+
+export async function telegramTest(pairToken: string): Promise<ApiOk<{ results: any[] }>> {
+    return apiFetch('/api/telegram/test', { method: 'POST', pairToken });
 }
 
 export function getApiBaseUrl(): string {

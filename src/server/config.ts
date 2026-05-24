@@ -31,6 +31,9 @@ export type AppConfig = {
   telegram: {
     mode: TelegramMode;
     botToken: string | null;
+    botUsername: string | null;
+    publicBaseUrl: string | null;
+    linkCodeTtlMs: number;
     /**
      * Optional allow-list of Telegram chat IDs that can use the bot.
      *
@@ -42,6 +45,7 @@ export type AppConfig = {
      * Used only in webhook mode.
      */
     webhookSecret: string | null;
+    featureEnabled: boolean;
     enabled: boolean;
   };
 };
@@ -92,7 +96,11 @@ export function loadConfig(): AppConfig {
   const vapidEnabled = Boolean(vapidSubject && vapidPublicKey && vapidPrivateKey);
 
   // Telegram
+  const telegramFeatureEnabled = boolEnv('TELEGRAM_ENABLED', true);
   const telegramBotToken = optEnv('TELEGRAM_BOT_TOKEN');
+  const telegramBotUsername = optEnv('TELEGRAM_BOT_USERNAME');
+  const telegramPublicBaseUrl = optEnv('APP_PUBLIC_URL') ?? optEnv('NEXT_PUBLIC_APP_URL') ?? optEnv('VERCEL_PROJECT_PRODUCTION_URL');
+  const telegramLinkCodeTtlMs = Number(process.env.TELEGRAM_LINK_CODE_TTL_MS ?? 10 * 60 * 1000);
   const telegramChatId = optEnv('TELEGRAM_CHAT_ID');
   const telegramWebhookSecret = optEnv('TELEGRAM_WEBHOOK_SECRET');
   const telegramModeRaw = (process.env.TELEGRAM_MODE ?? 'webhook').trim().toLowerCase();
@@ -111,9 +119,10 @@ export function loadConfig(): AppConfig {
   );
 
   const telegramEnabled =
-      telegramMode === 'polling'
-          ? Boolean(telegramBotToken && allowedChatIds.length > 0)
-          : Boolean(telegramBotToken && allowedChatIds.length > 0 && telegramWebhookSecret);
+      telegramFeatureEnabled &&
+      (telegramMode === 'polling'
+          ? Boolean(telegramBotToken)
+          : Boolean(telegramBotToken && telegramWebhookSecret));
 
   return {
     port,
@@ -139,8 +148,12 @@ export function loadConfig(): AppConfig {
     telegram: {
       mode: telegramMode,
       botToken: telegramBotToken,
+      botUsername: telegramBotUsername,
+      publicBaseUrl: telegramPublicBaseUrl,
+      linkCodeTtlMs: telegramLinkCodeTtlMs,
       allowedChatIds,
       webhookSecret: telegramWebhookSecret,
+      featureEnabled: telegramFeatureEnabled,
       enabled: telegramEnabled,
     },
   };
