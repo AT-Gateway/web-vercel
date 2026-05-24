@@ -613,39 +613,92 @@ export default function ClientView() {
         [refreshThreadMessages, router, setDrawerOpen]
     );
 
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        if (!("Notification" in window)) return;
+        if (!("serviceWorker" in navigator)) return;
+        if (!("PushManager" in window)) return;
+
+        navigator.serviceWorker.ready
+            .then((reg) => reg.pushManager.getSubscription())
+            .then((sub) => {
+                setNotifEnabled(Notification.permission === "granted" && Boolean(sub));
+            })
+            .catch(() => {
+                setNotifEnabled(false);
+            });
+    }, []);
+
     const enableNotifications = useCallback(async () => {
         if (!pairState) return;
         if (typeof window === "undefined") return;
 
+        if (!window.isSecureContext) {
+            showToast(
+                "HTTPS required",
+                "Push notifications only work on HTTPS or localhost."
+            );
+            return;
+        }
+
         if (!("Notification" in window)) {
-            showToast("Not supported", "This browser does not support notifications");
+            showToast("Not supported", "This browser does not support notifications.");
+            return;
+        }
+
+        if (!("serviceWorker" in navigator)) {
+            showToast("Not supported", "This browser does not support service workers.");
+            return;
+        }
+
+        if (!("PushManager" in window)) {
+            showToast("Not supported", "This browser does not support Web Push.");
             return;
         }
 
         try {
+            const keyRes = await vapidPublicKey();
+
+            if (!keyRes.key) {
+                showToast(
+                    "Push not configured",
+                    "Missing VAPID public key on the server."
+                );
+                return;
+            }
+
             const perm = await Notification.requestPermission();
             if (perm !== "granted") {
                 showToast("Permission denied");
                 return;
             }
 
-            // Subscribe to push if service worker is ready
+            await navigator.serviceWorker.register("/sw.js");
             const reg = await navigator.serviceWorker.ready;
-            const keyRes = await vapidPublicKey();
             const keyBytes = urlBase64ToUint8Array(keyRes.key);
 
-            const sub = await reg.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: keyBytes,
-            });
+            let sub = await reg.pushManager.getSubscription();
+
+            if (sub && !subscriptionUsesApplicationServerKey(sub, keyBytes)) {
+                await sub.unsubscribe();
+                sub = null;
+            }
+
+            if (!sub) {
+                sub = await reg.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: keyBytes,
+                });
+            }
 
             const deviceId = ensureClientDeviceId();
-            await pushSubscribe(pairState.pairToken, deviceId, sub);
+            await pushSubscribe(pairState.pairToken, deviceId, sub.toJSON());
 
             setNotifEnabled(true);
             showToast("Notifications enabled");
         } catch (e: any) {
-            showToast("Notifications failed", e?.message);
+            console.error("Notifications failed:", e);
+            showToast("Notifications failed", e?.message || String(e));
         }
     }, [pairState, showToast]);
 
@@ -748,7 +801,9 @@ export default function ClientView() {
         [pairState?.pairToken]
     );
 
-    const isDemoMode = Boolean(pairState?.demo || pairState?.pairToken?.startsWith('demo:'));
+    const isDemoMode = Boolean(
+        pairState?.demo || pairState?.pairToken?.startsWith("demo:")
+    );
 
     const showConversationSkeletons =
         conversations.length === 0 && (pairLoading || conversationsLoading);
@@ -1685,7 +1740,10 @@ function PairingScreen(props: {
                     demo: Boolean(res.demo),
                 });
                 if (res.demo) {
-                    props.onToast("Demo mode", "Seeded contacts and fake SMS data loaded.");
+                    props.onToast(
+                        "Demo mode",
+                        "Seeded contacts and fake SMS data loaded."
+                    );
                 }
             } catch (e: any) {
                 props.onToast("Pairing failed", e?.message);
@@ -1754,7 +1812,7 @@ function PairingScreen(props: {
 
                 <button
                     type="button"
-                    className="cursor-pointer mt-2 rounded-full border border-emerald-400/30 bg-emerald-500/15 px-6 py-2 text-sm text-emerald-100 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="mt-2 cursor-pointer rounded-full border border-emerald-400/30 bg-emerald-500/15 px-6 py-2 text-sm text-emerald-100 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={() => {
                         setCode(demoCode);
                         void doPair(demoCode);
@@ -1788,4 +1846,31 @@ function urlBase64ToUint8Array(base64String: string) {
         outputArray[i] = rawData.charCodeAt(i);
     }
     return outputArray;
+}
+
+function subscriptionUsesApplicationServerKey(
+    subscription: PushSubscription,
+    expectedKey: Uint8Array
+): boolean {
+    const currentKey = subscription.options?.applicationServerKey;
+
+    if (!currentKey) return true;
+
+    const current = bufferSourceToUint8Array(currentKey);
+
+    if (current.length !== expectedKey.length) return false;
+
+    for (let i = 0; i < current.length; i++) {
+        if (current[i] !== expectedKey[i]) return false;
+    }
+
+    return true;
+}
+
+function bufferSourceToUint8Array(source: BufferSource): Uint8Array {
+    if (source instanceof ArrayBuffer) {
+        return new Uint8Array(source);
+    }
+
+    return new Uint8Array(source.buffer, source.byteOffset, source.byteLength);
 }
