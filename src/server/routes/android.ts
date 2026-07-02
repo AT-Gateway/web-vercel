@@ -62,6 +62,10 @@ export async function registerAndroidRoutes(
     const bodyText = plaintext || (enc ? JSON.stringify(enc) : '');
     const bodyIsEncrypted = !plaintext && !!enc;
 
+    if (pairingId && (await repo.isThreadBlocked(pairingId, from))) {
+      return { ok: true, inserted: false, blocked: true };
+    }
+
     const insert = await repo.tryInsertMessage({
       id,
       pairingId,

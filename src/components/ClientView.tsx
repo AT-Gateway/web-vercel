@@ -10,9 +10,13 @@ import React, {
     useState,
 } from "react";
 import {
+    blockThread,
+    type BlockedChat,
     type Conversation,
     createInvite,
+    deleteThread,
     health,
+    listBlockedChats,
     listContacts,
     listConversations,
     listDevices,
@@ -30,12 +34,23 @@ import {
     type TelegramStatusRes,
     telegramStatus,
     telegramTest,
+    unblockThread,
+    upsertContact,
     vapidPublicKey,
 } from "@/lib/api";
 import { threadIdForPeer } from "@/lib/phone";
 import { useRouter, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { FiArrowLeft, FiSettings } from "react-icons/fi";
+import {
+    FiArrowLeft,
+    FiEdit3,
+    FiRefreshCw,
+    FiSettings,
+    FiShield,
+    FiShieldOff,
+    FiTrash2,
+    FiUserPlus,
+} from "react-icons/fi";
 import AutocompleteSearch from "@/components/AutocompleteSearch";
 import { LuBadgeInfo, LuSquarePen } from "react-icons/lu";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -58,6 +73,14 @@ import StartChat from "@/components/StartChat";
 import GlassSelect, { SelectOption } from "@/components/GlassSelect";
 import { Label } from "@/components/ui/label";
 import GlassSwitch from "@/components/GlassSwitch";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 
 type ToastState = { title: string; body?: string } | null;
 
@@ -75,6 +98,11 @@ type ContactLike = {
     displayName: string;
 };
 
+type ManagedContact = ContactLike & {
+    source?: "android" | "web";
+    nameLocked?: boolean;
+};
+
 type DeviceRow = {
     deviceId: string;
     deviceType: string;
@@ -82,6 +110,10 @@ type DeviceRow = {
     createdAt: number;
     lastSeenAt: number | null;
 };
+
+type ChatConfirmAction =
+    | { kind: "block"; threadId: string; peer: string; label: string }
+    | { kind: "delete"; threadId: string; peer: string; label: string };
 
 const SIM_OPTIONS: SelectOption[] = [
     { value: "0", label: "SIM 1", subLabel: "Primary" },
@@ -484,6 +516,18 @@ export default function ClientView() {
 
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [conversationsLoading, setConversationsLoading] = useState<boolean>(false);
+    const [blockedChats, setBlockedChats] = useState<BlockedChat[]>([]);
+    const [blockedChatsLoading, setBlockedChatsLoading] = useState(false);
+    const [chatActionLoading, setChatActionLoading] = useState(false);
+    const [chatConfirmAction, setChatConfirmAction] =
+        useState<ChatConfirmAction | null>(null);
+
+    const [managedContacts, setManagedContacts] = useState<ManagedContact[]>([]);
+    const [contactsLoading, setContactsLoading] = useState(false);
+    const [contactsQuery, setContactsQuery] = useState("");
+    const [contactActionLoading, setContactActionLoading] = useState(false);
+    const [contactDialogOpen, setContactDialogOpen] = useState(false);
+    const [contactForm, setContactForm] = useState({ displayName: "", number: "" });
 
     const [inviteExpiresAt, setInviteExpiresAt] = useState<number | null>(null);
     const [inviteCode, setInviteCode] = useState<string | null>(null);
@@ -514,6 +558,8 @@ export default function ClientView() {
 
     const [drawerTransitionsEnabled, setDrawerTransitionsEnabled] =
         useState<boolean>(false);
+    const [mobileSwipeOffset, setMobileSwipeOffset] = useState(0);
+    const [mobileSwipeDragging, setMobileSwipeDragging] = useState(false);
 
     useEffect(() => {
         // Enable transitions only after first paint
@@ -523,6 +569,12 @@ export default function ClientView() {
     const listAbortRef = useRef<AbortController | null>(null);
     const sseRef = useRef<EventSource | null>(null);
     const activeThreadRef = useRef<string | null>(null);
+    const mobileSwipeRef = useRef<{
+        x: number;
+        y: number;
+        tracking: boolean;
+        started: boolean;
+    } | null>(null);
     activeThreadRef.current = activeThreadId;
 
     // ✅ sync with URL changes
@@ -587,6 +639,38 @@ export default function ClientView() {
             setTelegramLoading(false);
         }
     }, [pairState, showToast]);
+
+    const refreshBlockedChats = useCallback(async () => {
+        if (!pairState) return;
+
+        setBlockedChatsLoading(true);
+        try {
+            const r = await listBlockedChats(pairState.pairToken);
+            setBlockedChats(r.blockedChats || []);
+        } catch (e: any) {
+            showToast("Failed to load blocked chats", e?.message);
+        } finally {
+            setBlockedChatsLoading(false);
+        }
+    }, [pairState, showToast]);
+
+    const loadManagedContacts = useCallback(async () => {
+        if (!pairState) return;
+
+        setContactsLoading(true);
+        try {
+            const r = await listContacts(
+                pairState.pairToken,
+                contactsQuery.trim(),
+                80
+            );
+            setManagedContacts((r.contacts || []) as ManagedContact[]);
+        } catch (e: any) {
+            showToast("Failed to load contacts", e?.message);
+        } finally {
+            setContactsLoading(false);
+        }
+    }, [pairState, contactsQuery, showToast]);
 
     const toggleTelegramAlerts = useCallback(
         async (active: boolean) => {
@@ -689,7 +773,24 @@ export default function ClientView() {
         if (!settingsOpen || !pairState) return;
         loadDevices();
         loadTelegramStatus();
-    }, [settingsOpen, pairState, loadDevices, loadTelegramStatus]);
+        refreshBlockedChats();
+        loadManagedContacts();
+    }, [
+        settingsOpen,
+        pairState,
+        loadDevices,
+        loadTelegramStatus,
+        refreshBlockedChats,
+        loadManagedContacts,
+    ]);
+
+    useEffect(() => {
+        if (!settingsOpen || !pairState) return;
+        const t = window.setTimeout(() => {
+            loadManagedContacts();
+        }, 250);
+        return () => window.clearTimeout(t);
+    }, [settingsOpen, pairState, contactsQuery, loadManagedContacts]);
 
     useEffect(() => {
         if (!stickToBottomRef.current) return;
@@ -735,7 +836,12 @@ export default function ClientView() {
         setConversationsLoading(true);
         try {
             const res = await listConversations(pairState.pairToken, 200);
-            setConversations(res.conversations ?? []);
+            setConversations(
+                (res.conversations ?? []).map((c) => ({
+                    ...c,
+                    blocked: Boolean(c.blocked),
+                }))
+            );
         } catch (e: any) {
             showToast("Failed to load chats", e?.message);
         } finally {
@@ -783,7 +889,8 @@ export default function ClientView() {
     useEffect(() => {
         if (!pairState) return;
         refreshConversations();
-    }, [pairState, refreshConversations]);
+        refreshBlockedChats();
+    }, [pairState, refreshConversations, refreshBlockedChats]);
 
     useEffect(() => {
         if (!pairState) return;
@@ -846,6 +953,16 @@ export default function ClientView() {
                 }
             });
 
+            es.addEventListener("chats", async () => {
+                await Promise.all([
+                    refreshConversations(),
+                    refreshBlockedChats(),
+                    activeThreadRef.current
+                        ? refreshThreadMessages(activeThreadRef.current)
+                        : Promise.resolve(),
+                ]);
+            });
+
             es.onerror = () => {};
         };
 
@@ -868,7 +985,7 @@ export default function ClientView() {
                 // ignore
             }
         };
-    }, [pairState, refreshConversations, refreshThreadMessages]);
+    }, [pairState, refreshConversations, refreshThreadMessages, refreshBlockedChats]);
 
     const activeConversation = useMemo(() => {
         if (!activeThreadId) return null;
@@ -880,6 +997,33 @@ export default function ClientView() {
         return messagesByThread[activeThreadId] || [];
     }, [activeThreadId, messagesByThread]);
 
+    const activePeer =
+        activeSendTo ||
+        activeConversation?.peer ||
+        activeContact.rawNumber ||
+        activeContact.norm ||
+        "";
+
+    const activeLabel =
+        activeConversation?.peerName ||
+        activeContact?.displayName ||
+        activeConversation?.peer ||
+        activeContact?.rawNumber ||
+        activeContact?.norm ||
+        activeSendTo ||
+        "";
+
+    const activeBlocked = Boolean(
+        activeConversation?.blocked ||
+            (activeThreadId &&
+                blockedChats.some(
+                    (b) =>
+                        b.threadId === activeThreadId ||
+                        b.peer === activePeer ||
+                        threadIdForPeer(b.peer) === activeThreadId
+                ))
+    );
+
     const clearSelectedConversation = useCallback(() => {
         setActiveThreadId(null);
         setActiveSendTo(null);
@@ -887,6 +1031,157 @@ export default function ClientView() {
         setComposer("");
         router.replace("/"); // ✅ remove params
     }, [router]);
+
+    const refreshChatManagement = useCallback(
+        async (threadIdToRefresh?: string | null) => {
+            await Promise.all([
+                refreshConversations(),
+                refreshBlockedChats(),
+                threadIdToRefresh
+                    ? refreshThreadMessages(threadIdToRefresh)
+                    : Promise.resolve(),
+            ]);
+        },
+        [refreshBlockedChats, refreshConversations, refreshThreadMessages]
+    );
+
+    const doBlockThread = useCallback(
+        async (threadIdToBlock: string, peer: string) => {
+            if (!pairState) return;
+            setChatActionLoading(true);
+            try {
+                await blockThread(pairState.pairToken, {
+                    threadId: threadIdToBlock,
+                    peer,
+                });
+                await refreshChatManagement(threadIdToBlock);
+                showToast("Chat blocked", "Incoming messages will be ignored.");
+            } catch (e: any) {
+                showToast("Block failed", e?.message);
+            } finally {
+                setChatActionLoading(false);
+            }
+        },
+        [pairState, refreshChatManagement, showToast]
+    );
+
+    const doUnblockThread = useCallback(
+        async (threadIdToUnblock: string) => {
+            if (!pairState) return;
+            setChatActionLoading(true);
+            try {
+                await unblockThread(pairState.pairToken, threadIdToUnblock);
+                await refreshChatManagement(threadIdToUnblock);
+                showToast("Chat unblocked");
+            } catch (e: any) {
+                showToast("Unblock failed", e?.message);
+            } finally {
+                setChatActionLoading(false);
+            }
+        },
+        [pairState, refreshChatManagement, showToast]
+    );
+
+    const doDeleteThread = useCallback(
+        async (threadIdToDelete: string) => {
+            if (!pairState) return;
+            setChatActionLoading(true);
+            try {
+                const res = await deleteThread(pairState.pairToken, threadIdToDelete);
+                setMessagesByThread((prev) => {
+                    const next = { ...prev };
+                    delete next[threadIdToDelete];
+                    return next;
+                });
+                await Promise.all([refreshConversations(), refreshBlockedChats()]);
+                if (activeThreadRef.current === threadIdToDelete) {
+                    clearSelectedConversation();
+                }
+                showToast(
+                    "Chat deleted",
+                    `${res.deletedMessages} message(s) removed.`
+                );
+            } catch (e: any) {
+                showToast("Delete failed", e?.message);
+            } finally {
+                setChatActionLoading(false);
+            }
+        },
+        [
+            pairState,
+            refreshConversations,
+            refreshBlockedChats,
+            clearSelectedConversation,
+            showToast,
+        ]
+    );
+
+    const openContactEditor = useCallback((contact?: Partial<ContactLike>) => {
+        setContactForm({
+            displayName: contact?.displayName || "",
+            number: contact?.rawNumber || contact?.norm || "",
+        });
+        setContactDialogOpen(true);
+    }, []);
+
+    const saveContactForm = useCallback(async () => {
+        if (!pairState) return;
+        const displayName = contactForm.displayName.trim();
+        const number = contactForm.number.trim();
+        if (!displayName || !number) {
+            showToast("Missing contact details");
+            return;
+        }
+
+        setContactActionLoading(true);
+        try {
+            const r = await upsertContact(pairState.pairToken, {
+                displayName,
+                number,
+            });
+            const saved = r.contact as ManagedContact;
+            setActiveContact((prev) => {
+                const matchesActive =
+                    prev.norm === saved.norm ||
+                    prev.rawNumber === saved.rawNumber ||
+                    activePeer === saved.rawNumber ||
+                    activePeer === saved.norm;
+                return matchesActive ? { ...prev, ...saved } : prev;
+            });
+            setContactForm({ displayName: "", number: "" });
+            setContactDialogOpen(false);
+            await Promise.all([
+                loadManagedContacts(),
+                refreshConversations(),
+                activeThreadId ? refreshThreadMessages(activeThreadId) : Promise.resolve(),
+            ]);
+            showToast("Contact saved");
+        } catch (e: any) {
+            showToast("Failed to save contact", e?.message);
+        } finally {
+            setContactActionLoading(false);
+        }
+    }, [
+        pairState,
+        contactForm,
+        showToast,
+        activePeer,
+        loadManagedContacts,
+        refreshConversations,
+        activeThreadId,
+        refreshThreadMessages,
+    ]);
+
+    const performConfirmedChatAction = useCallback(async () => {
+        if (!chatConfirmAction) return;
+        const action = chatConfirmAction;
+        setChatConfirmAction(null);
+        if (action.kind === "block") {
+            await doBlockThread(action.threadId, action.peer);
+            return;
+        }
+        await doDeleteThread(action.threadId);
+    }, [chatConfirmAction, doBlockThread, doDeleteThread]);
 
     const startChatFromContact = useCallback(
         (c: ContactLike) => {
@@ -1022,6 +1317,10 @@ export default function ClientView() {
             showToast("No recipient", "Pick a chat or select a contact");
             return;
         }
+        if (activeBlocked) {
+            showToast("Chat blocked", "Unblock this chat before sending.");
+            return;
+        }
 
         const tid = activeThreadId || threadIdForPeer(sendTo);
 
@@ -1080,6 +1379,7 @@ export default function ClientView() {
         refreshThreadMessages,
         simSlotIndex,
         scrollToBottom,
+        activeBlocked,
     ]);
 
     const openInvite = useCallback(async () => {
@@ -1143,12 +1443,64 @@ export default function ClientView() {
     }, [composer, resizeAll]);
     // ✅✅ END FIX
 
+    // ✅ mobile drawer visibility
+    const showMobileMessagesDrawer = isMobile && !!activeThreadId;
+    const resetMobileSwipe = useCallback(() => {
+        mobileSwipeRef.current = null;
+        setMobileSwipeDragging(false);
+        setMobileSwipeOffset(0);
+    }, []);
+
+    useEffect(() => {
+        if (showMobileMessagesDrawer) return;
+        resetMobileSwipe();
+    }, [showMobileMessagesDrawer, resetMobileSwipe]);
+
     if (!showMessagesSkeletons && !showConversationSkeletons && !pairState) {
         return <PairingScreen onPaired={(p) => setPairState(p)} onToast={showToast} />;
     }
 
-    // ✅ mobile drawer visibility
-    const showMobileMessagesDrawer = isMobile && !!activeThreadId;
+    const mobileDrawerTransform = showMobileMessagesDrawer
+        ? `translateX(${mobileSwipeOffset}px)`
+        : "translateX(100%)";
+
+    const onMobileDrawerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+        if (!showMobileMessagesDrawer) return;
+        mobileSwipeRef.current = {
+            x: e.clientX,
+            y: e.clientY,
+            tracking: e.clientX <= 96,
+            started: false,
+        };
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+    };
+
+    const onMobileDrawerPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+        const swipe = mobileSwipeRef.current;
+        if (!swipe?.tracking) return;
+        const dx = e.clientX - swipe.x;
+        const dy = e.clientY - swipe.y;
+        if (dx <= 0) return;
+
+        const horizontal = dx > Math.abs(dy) * 1.25;
+        if (!swipe.started && !horizontal) return;
+
+        swipe.started = true;
+        setMobileSwipeDragging(true);
+        setMobileSwipeOffset(Math.min(dx, window.innerWidth));
+        e.preventDefault();
+    };
+
+    const onMobileDrawerPointerUp = () => {
+        const shouldClose =
+            mobileSwipeDragging &&
+            mobileSwipeOffset > Math.min(140, window.innerWidth * 0.32);
+
+        if (shouldClose) {
+            clearSelectedConversation();
+        }
+        resetMobileSwipe();
+    };
 
     return (
         <div className="container mx-auto flex h-screen w-full items-start gap-4 py-4 md:gap-6 md:py-6">
@@ -1171,6 +1523,8 @@ export default function ClientView() {
                                         setSettingsOpen(true);
                                         loadDevices();
                                         loadTelegramStatus();
+                                        refreshBlockedChats();
+                                        loadManagedContacts();
                                     }}
                                     className={cn(
                                         "flex h-10 w-10 min-w-10 cursor-pointer items-center justify-center",
@@ -1303,6 +1657,8 @@ export default function ClientView() {
                                         setSettingsOpen(true);
                                         loadDevices();
                                         loadTelegramStatus();
+                                        refreshBlockedChats();
+                                        loadManagedContacts();
                                     }}
                                     className={cn(
                                         "flex h-10 w-10 min-w-10 cursor-pointer items-center justify-center",
@@ -1400,6 +1756,215 @@ export default function ClientView() {
                                         onSetupWebhook={setupTelegramWebhook}
                                         onTest={testTelegram}
                                     />
+
+                                    <span className="h-0 w-full bg-linear-to-r from-transparent via-white/50 to-transparent py-px" />
+
+                                    <div className="flex w-full flex-col justify-between gap-3">
+                                        <div className="flex w-full items-center justify-between gap-2">
+                                            <div className="text-lg font-semibold">
+                                                Blocked chats
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={refreshBlockedChats}
+                                                disabled={blockedChatsLoading}
+                                                className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-white/5 text-white/80 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                                title="Refresh blocked chats"
+                                            >
+                                                <FiRefreshCw
+                                                    className={cn(
+                                                        blockedChatsLoading && "animate-spin"
+                                                    )}
+                                                />
+                                            </button>
+                                        </div>
+
+                                        <div className="scroll-style-none flex max-h-56 w-full flex-col gap-2 overflow-auto md:max-h-72">
+                                            {blockedChatsLoading ? (
+                                                Array.from({ length: 3 }).map((_, i) => (
+                                                    <div
+                                                        key={i}
+                                                        className="flex w-full items-center justify-between gap-2 rounded-3xl border border-white/20 bg-white/5 p-3"
+                                                    >
+                                                        <div className="flex flex-col gap-2">
+                                                            <Skeleton className="h-5 w-36 rounded-full bg-gray-400/30" />
+                                                            <Skeleton className="h-4 w-24 rounded-full bg-gray-400/30" />
+                                                        </div>
+                                                        <Skeleton className="h-8 w-20 rounded-full bg-gray-400/30" />
+                                                    </div>
+                                                ))
+                                            ) : blockedChats.length ? (
+                                                blockedChats.map((b) => (
+                                                    <div
+                                                        key={b.threadId}
+                                                        className="flex w-full items-center justify-between gap-2 rounded-3xl border border-white/20 bg-white/5 p-3"
+                                                    >
+                                                        <div className="min-w-0">
+                                                            <div className="truncate font-semibold">
+                                                                {b.peerName || b.peer}
+                                                            </div>
+                                                            <div className="truncate text-sm text-white/55">
+                                                                {b.peer}
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="flex items-center gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() =>
+                                                                    doUnblockThread(b.threadId)
+                                                                }
+                                                                disabled={chatActionLoading}
+                                                                className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-500/15 text-emerald-100 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                title="Unblock chat"
+                                                            >
+                                                                <FiShieldOff />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                onClick={() =>
+                                                                    setChatConfirmAction({
+                                                                        kind: "delete",
+                                                                        threadId: b.threadId,
+                                                                        peer: b.peer,
+                                                                        label:
+                                                                            b.peerName ||
+                                                                            b.peer,
+                                                                    })
+                                                                }
+                                                                disabled={chatActionLoading}
+                                                                className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-red-500/40 bg-red-600/20 text-red-100 transition hover:bg-red-600/30 disabled:cursor-not-allowed disabled:opacity-50"
+                                                                title="Delete chat history"
+                                                            >
+                                                                <FiTrash2 />
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            ) : (
+                                                <div className="rounded-3xl border border-white/15 bg-white/5 p-4 text-sm text-white/55">
+                                                    No blocked chats.
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <span className="h-0 w-full bg-linear-to-r from-transparent via-white/50 to-transparent py-px" />
+
+                                    <div className="flex w-full flex-col justify-between gap-3">
+                                        <div className="flex w-full items-center justify-between gap-2">
+                                            <div className="text-lg font-semibold">
+                                                Contacts
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => openContactEditor()}
+                                                className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-sky-400/30 bg-sky-500/15 text-sky-100 transition hover:bg-sky-500/25"
+                                                title="Add contact"
+                                            >
+                                                <FiUserPlus />
+                                            </button>
+                                        </div>
+
+                                        <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                                            <input
+                                                value={contactForm.displayName}
+                                                onChange={(e) =>
+                                                    setContactForm((prev) => ({
+                                                        ...prev,
+                                                        displayName: e.target.value,
+                                                    }))
+                                                }
+                                                placeholder="Name"
+                                                className="min-w-0 rounded-3xl border border-white/15 bg-white/5 px-4 py-2 text-sm text-white outline-0 transition focus:border-white/40"
+                                            />
+                                            <input
+                                                value={contactForm.number}
+                                                onChange={(e) =>
+                                                    setContactForm((prev) => ({
+                                                        ...prev,
+                                                        number: e.target.value,
+                                                    }))
+                                                }
+                                                placeholder="Phone number"
+                                                className="min-w-0 rounded-3xl border border-white/15 bg-white/5 px-4 py-2 text-sm text-white outline-0 transition focus:border-white/40"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={saveContactForm}
+                                                disabled={
+                                                    contactActionLoading ||
+                                                    !contactForm.displayName.trim() ||
+                                                    !contactForm.number.trim()
+                                                }
+                                                className="flex h-10 min-w-10 cursor-pointer items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-500/15 px-4 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                                                title="Save contact"
+                                            >
+                                                <FiEdit3 />
+                                            </button>
+                                        </div>
+
+                                        <input
+                                            value={contactsQuery}
+                                            onChange={(e) => setContactsQuery(e.target.value)}
+                                            placeholder="Search contacts"
+                                            className="w-full rounded-3xl border border-white/15 bg-white/5 px-4 py-2 text-sm text-white outline-0 transition focus:border-white/40"
+                                        />
+
+                                        <div className="scroll-style-none flex max-h-64 w-full flex-col gap-2 overflow-auto md:max-h-80">
+                                            {contactsLoading ? (
+                                                Array.from({ length: 4 }).map((_, i) => (
+                                                    <div
+                                                        key={i}
+                                                        className="flex w-full items-center justify-between gap-2 rounded-3xl border border-white/20 bg-white/5 p-3"
+                                                    >
+                                                        <div className="flex flex-col gap-2">
+                                                            <Skeleton className="h-5 w-36 rounded-full bg-gray-400/30" />
+                                                            <Skeleton className="h-4 w-24 rounded-full bg-gray-400/30" />
+                                                        </div>
+                                                        <Skeleton className="h-8 w-8 rounded-full bg-gray-400/30" />
+                                                    </div>
+                                                ))
+                                            ) : managedContacts.length ? (
+                                                managedContacts.map((c) => (
+                                                    <div
+                                                        key={c.norm}
+                                                        className="flex w-full items-center justify-between gap-2 rounded-3xl border border-white/20 bg-white/5 p-3"
+                                                    >
+                                                        <div className="min-w-0">
+                                                            <div className="truncate font-semibold">
+                                                                {c.displayName}
+                                                            </div>
+                                                            <div className="truncate text-sm text-white/55">
+                                                                {c.rawNumber || c.norm}
+                                                            </div>
+                                                        </div>
+
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => {
+                                                                setContactForm({
+                                                                    displayName:
+                                                                        c.displayName,
+                                                                    number:
+                                                                        c.rawNumber ||
+                                                                        c.norm,
+                                                                });
+                                                            }}
+                                                            className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-white/5 text-white/80 transition hover:bg-white/10"
+                                                            title="Edit contact"
+                                                        >
+                                                            <FiEdit3 />
+                                                        </button>
+                                                    </div>
+                                                ))
+                                            ) : (
+                                                <div className="rounded-3xl border border-white/15 bg-white/5 p-4 text-sm text-white/55">
+                                                    No contacts found.
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
 
                                     <span className="h-0 w-full bg-linear-to-r from-transparent via-white/50 to-transparent py-px" />
 
@@ -1592,8 +2157,15 @@ export default function ClientView() {
 
                                         <div className="me-1 flex w-[calc(100%-40px)] flex-col items-start gap-0.5 overflow-x-hidden">
                                             <div className="flex w-full items-center justify-between">
-                                                <span className="truncate text-lg font-semibold">
-                                                    {c.peerName || c.peer}
+                                                <span className="flex min-w-0 items-center gap-2">
+                                                    <span className="truncate text-lg font-semibold">
+                                                        {c.peerName || c.peer}
+                                                    </span>
+                                                    {c.blocked ? (
+                                                        <span className="shrink-0 rounded-full border border-red-400/30 bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-100">
+                                                            Blocked
+                                                        </span>
+                                                    ) : null}
                                                 </span>
                                                 <span className="text-base text-white/60">
                                                     {formatSmartDate(c.lastTs)}
@@ -1660,6 +2232,79 @@ export default function ClientView() {
                                     "z-99 bg-linear-to-b from-black via-black/80 to-black/0 pb-10"
                                 )}
                             >
+                                <div className="absolute top-2 right-2 flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            openContactEditor({
+                                                displayName:
+                                                    activeConversation?.peerName ||
+                                                    activeContact.displayName,
+                                                rawNumber: activePeer,
+                                                norm: activePeer,
+                                            })
+                                        }
+                                        disabled={!activePeer}
+                                        className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-[#1e1e1e]/70 text-white backdrop-blur-3xl transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                                        title="Edit contact"
+                                    >
+                                        <FiEdit3 />
+                                    </button>
+                                    {activeBlocked ? (
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                activeThreadId &&
+                                                doUnblockThread(activeThreadId)
+                                            }
+                                            disabled={!activeThreadId || chatActionLoading}
+                                            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-500/15 text-emerald-100 backdrop-blur-3xl transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                                            title="Unblock chat"
+                                        >
+                                            <FiShieldOff />
+                                        </button>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                activeThreadId &&
+                                                setChatConfirmAction({
+                                                    kind: "block",
+                                                    threadId: activeThreadId,
+                                                    peer: activePeer,
+                                                    label: activeLabel || activePeer,
+                                                })
+                                            }
+                                            disabled={
+                                                !activeThreadId ||
+                                                !activePeer ||
+                                                chatActionLoading
+                                            }
+                                            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-amber-400/30 bg-amber-500/15 text-amber-100 backdrop-blur-3xl transition hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                                            title="Block chat"
+                                        >
+                                            <FiShield />
+                                        </button>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            activeThreadId &&
+                                            setChatConfirmAction({
+                                                kind: "delete",
+                                                threadId: activeThreadId,
+                                                peer: activePeer,
+                                                label: activeLabel || activePeer,
+                                            })
+                                        }
+                                        disabled={!activeThreadId || chatActionLoading}
+                                        className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-red-500/40 bg-red-600/20 text-red-100 backdrop-blur-3xl transition hover:bg-red-600/30 disabled:cursor-not-allowed disabled:opacity-40"
+                                        title="Delete chat history"
+                                    >
+                                        <FiTrash2 />
+                                    </button>
+                                </div>
+
                                 <span className="z-10 flex aspect-square h-12 w-12 items-center justify-center rounded-full bg-linear-to-t from-[#40385b] to-[#696679]">
                                     {activeConversation?.peerName ||
                                     activeContact?.displayName ? (
@@ -1677,13 +2322,13 @@ export default function ClientView() {
                                     )}
                                 </span>
 
-                                <span className="-mt-2.5 flex items-center justify-center rounded-full border border-gray-400/40 bg-[#1e1e1e]/60 px-3 py-1 text-sm font-semibold text-white backdrop-blur-3xl">
-                                    {activeConversation?.peerName ||
-                                        activeContact?.displayName ||
-                                        activeConversation?.peer ||
-                                        activeContact?.rawNumber ||
-                                        activeContact?.norm ||
-                                        activeSendTo}
+                                <span className="-mt-2.5 flex max-w-[calc(100%-7rem)] items-center justify-center gap-2 rounded-full border border-gray-400/40 bg-[#1e1e1e]/60 px-3 py-1 text-sm font-semibold text-white backdrop-blur-3xl">
+                                    <span className="truncate">{activeLabel}</span>
+                                    {activeBlocked ? (
+                                        <span className="shrink-0 rounded-full bg-red-500/20 px-2 py-0.5 text-[10px] text-red-100">
+                                            Blocked
+                                        </span>
+                                    ) : null}
                                 </span>
                             </div>
 
@@ -1792,10 +2437,14 @@ export default function ClientView() {
                                             doSend();
                                         }
                                     }}
-                                    placeholder="Type a message…"
+                                    placeholder={
+                                        activeBlocked
+                                            ? "Chat is blocked"
+                                            : "Type a message…"
+                                    }
                                     className="w-full resize-none rounded-3xl border border-gray-400/40 bg-[#1e1e1e]/60 px-4 py-2.5 text-sm outline-0 backdrop-blur-3xl transition-colors focus:border-gray-400/80 md:text-base"
                                     style={{ maxHeight: 400 }}
-                                    disabled={pairLoading || !pairState}
+                                    disabled={pairLoading || !pairState || activeBlocked}
                                 />
 
                                 <button
@@ -1804,6 +2453,7 @@ export default function ClientView() {
                                     disabled={
                                         pairLoading ||
                                         !pairState ||
+                                        activeBlocked ||
                                         !composer.trim() ||
                                         !(activeSendTo || activeConversation?.peer)
                                     }
@@ -1835,16 +2485,24 @@ export default function ClientView() {
 
             {/* ✅ MOBILE DRAWER (slides over conversations) */}
             <div
+                onPointerDown={onMobileDrawerPointerDown}
+                onPointerMove={onMobileDrawerPointerMove}
+                onPointerUp={onMobileDrawerPointerUp}
+                onPointerCancel={resetMobileSwipe}
                 className={cn(
                     "fixed inset-0 z-9999 container bg-black py-4 md:hidden",
-                    drawerTransitionsEnabled
-                        ? "transition-transform duration-300 ease-in-out"
-                        : "transition-none",
-                    showMobileMessagesDrawer ? "translate-x-0" : "translate-x-full",
                     showMobileMessagesDrawer
                         ? "pointer-events-auto"
                         : "pointer-events-none"
                 )}
+                style={{
+                    transform: mobileDrawerTransform,
+                    transition:
+                        drawerTransitionsEnabled && !mobileSwipeDragging
+                            ? "transform 300ms ease-in-out"
+                            : "none",
+                    touchAction: mobileSwipeDragging ? "none" : "pan-y",
+                }}
             >
                 <div className="shadow-soft-lg h-full w-full rounded-3xl">
                     <div className="relative flex h-full w-full flex-col items-center justify-start gap-2">
@@ -1866,6 +2524,81 @@ export default function ClientView() {
                                         <FiArrowLeft className="text-xl" />
                                     </button>
 
+                                    <div className="absolute top-2 right-2 flex items-center gap-1.5">
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                openContactEditor({
+                                                    displayName:
+                                                        activeConversation?.peerName ||
+                                                        activeContact.displayName,
+                                                    rawNumber: activePeer,
+                                                    norm: activePeer,
+                                                })
+                                            }
+                                            disabled={!activePeer}
+                                            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-white/20 bg-[#1e1e1e]/70 text-white backdrop-blur-3xl transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                                            title="Edit contact"
+                                        >
+                                            <FiEdit3 />
+                                        </button>
+                                        {activeBlocked ? (
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    activeThreadId &&
+                                                    doUnblockThread(activeThreadId)
+                                                }
+                                                disabled={
+                                                    !activeThreadId || chatActionLoading
+                                                }
+                                                className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-emerald-400/30 bg-emerald-500/15 text-emerald-100 backdrop-blur-3xl transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                                                title="Unblock chat"
+                                            >
+                                                <FiShieldOff />
+                                            </button>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    activeThreadId &&
+                                                    setChatConfirmAction({
+                                                        kind: "block",
+                                                        threadId: activeThreadId,
+                                                        peer: activePeer,
+                                                        label: activeLabel || activePeer,
+                                                    })
+                                                }
+                                                disabled={
+                                                    !activeThreadId ||
+                                                    !activePeer ||
+                                                    chatActionLoading
+                                                }
+                                                className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-amber-400/30 bg-amber-500/15 text-amber-100 backdrop-blur-3xl transition hover:bg-amber-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                                                title="Block chat"
+                                            >
+                                                <FiShield />
+                                            </button>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={() =>
+                                                activeThreadId &&
+                                                setChatConfirmAction({
+                                                    kind: "delete",
+                                                    threadId: activeThreadId,
+                                                    peer: activePeer,
+                                                    label: activeLabel || activePeer,
+                                                })
+                                            }
+                                            disabled={!activeThreadId || chatActionLoading}
+                                            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-red-500/40 bg-red-600/20 text-red-100 backdrop-blur-3xl transition hover:bg-red-600/30 disabled:cursor-not-allowed disabled:opacity-40"
+                                            title="Delete chat history"
+                                        >
+                                            <FiTrash2 />
+                                        </button>
+                                    </div>
+
                                     <span className="flex aspect-square h-12 w-12 items-center justify-center rounded-full bg-linear-to-t from-[#40385b] to-[#696679]">
                                         {activeConversation?.peerName ||
                                         activeContact?.displayName ? (
@@ -1883,13 +2616,13 @@ export default function ClientView() {
                                         )}
                                     </span>
 
-                                    <span className="flex items-center justify-center rounded-full border border-gray-400/40 bg-[#1e1e1e]/60 px-3 py-1 text-sm font-semibold text-white backdrop-blur-3xl">
-                                        {activeConversation?.peerName ||
-                                            activeContact?.displayName ||
-                                            activeConversation?.peer ||
-                                            activeContact?.rawNumber ||
-                                            activeContact?.norm ||
-                                            activeSendTo}
+                                    <span className="flex max-w-[calc(100%-7.5rem)] items-center justify-center gap-2 rounded-full border border-gray-400/40 bg-[#1e1e1e]/60 px-3 py-1 text-sm font-semibold text-white backdrop-blur-3xl">
+                                        <span className="truncate">{activeLabel}</span>
+                                        {activeBlocked ? (
+                                            <span className="shrink-0 rounded-full bg-red-500/20 px-2 py-0.5 text-[10px] text-red-100">
+                                                Blocked
+                                            </span>
+                                        ) : null}
                                     </span>
                                 </div>
 
@@ -1996,10 +2729,14 @@ export default function ClientView() {
                                                 doSend();
                                             }
                                         }}
-                                        placeholder="Type a message…"
+                                        placeholder={
+                                            activeBlocked
+                                                ? "Chat is blocked"
+                                                : "Type a message…"
+                                        }
                                         className="scroll-style-none w-full resize-none rounded-3xl border border-gray-400/40 bg-[#1e1e1e]/60 px-4 py-2 text-lg outline-0 backdrop-blur-3xl transition-colors focus:border-gray-400/80"
                                         style={{ maxHeight: 400 }}
-                                        disabled={pairLoading || !pairState}
+                                        disabled={pairLoading || !pairState || activeBlocked}
                                     />
 
                                     <button
@@ -2008,6 +2745,7 @@ export default function ClientView() {
                                         disabled={
                                             pairLoading ||
                                             !pairState ||
+                                            activeBlocked ||
                                             !composer.trim() ||
                                             !(activeSendTo || activeConversation?.peer)
                                         }
@@ -2022,6 +2760,109 @@ export default function ClientView() {
                     </div>
                 </div>
             </div>
+
+            <Dialog open={contactDialogOpen} onOpenChange={setContactDialogOpen}>
+                <DialogContent className="border-white/15 bg-[#0b0f14] text-white sm:rounded-3xl">
+                    <DialogHeader>
+                        <DialogTitle>Contact</DialogTitle>
+                        <DialogDescription className="text-white/60">
+                            Save a web-managed name for this number.
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <div className="flex flex-col gap-3">
+                        <input
+                            value={contactForm.displayName}
+                            onChange={(e) =>
+                                setContactForm((prev) => ({
+                                    ...prev,
+                                    displayName: e.target.value,
+                                }))
+                            }
+                            placeholder="Name"
+                            className="w-full rounded-3xl border border-white/15 bg-white/5 px-4 py-3 text-white outline-0 transition focus:border-white/40"
+                        />
+                        <input
+                            value={contactForm.number}
+                            onChange={(e) =>
+                                setContactForm((prev) => ({
+                                    ...prev,
+                                    number: e.target.value,
+                                }))
+                            }
+                            placeholder="Phone number"
+                            className="w-full rounded-3xl border border-white/15 bg-white/5 px-4 py-3 text-white outline-0 transition focus:border-white/40"
+                        />
+                    </div>
+
+                    <DialogFooter className="gap-2 sm:space-x-0">
+                        <button
+                            type="button"
+                            onClick={() => setContactDialogOpen(false)}
+                            className="rounded-full border border-white/15 bg-white/5 px-4 py-2 font-semibold text-white/80 transition hover:bg-white/10"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            onClick={saveContactForm}
+                            disabled={
+                                contactActionLoading ||
+                                !contactForm.displayName.trim() ||
+                                !contactForm.number.trim()
+                            }
+                            className="rounded-full border border-emerald-400/30 bg-emerald-500/15 px-4 py-2 font-semibold text-emerald-100 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            Save
+                        </button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog
+                open={Boolean(chatConfirmAction)}
+                onOpenChange={(open) => {
+                    if (!open) setChatConfirmAction(null);
+                }}
+            >
+                <DialogContent className="border-white/15 bg-[#0b0f14] text-white sm:rounded-3xl">
+                    <DialogHeader>
+                        <DialogTitle>
+                            {chatConfirmAction?.kind === "block"
+                                ? "Block chat"
+                                : "Delete chat history"}
+                        </DialogTitle>
+                        <DialogDescription className="text-white/60">
+                            {chatConfirmAction?.kind === "block"
+                                ? `Incoming messages from ${chatConfirmAction.label} will be ignored before they are stored.`
+                                : `Delete messages with ${chatConfirmAction?.label || "this chat"} from the database. This cannot be undone.`}
+                        </DialogDescription>
+                    </DialogHeader>
+
+                    <DialogFooter className="gap-2 sm:space-x-0">
+                        <button
+                            type="button"
+                            onClick={() => setChatConfirmAction(null)}
+                            className="rounded-full border border-white/15 bg-white/5 px-4 py-2 font-semibold text-white/80 transition hover:bg-white/10"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            onClick={performConfirmedChatAction}
+                            disabled={chatActionLoading}
+                            className={cn(
+                                "rounded-full px-4 py-2 font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
+                                chatConfirmAction?.kind === "block"
+                                    ? "border border-amber-400/30 bg-amber-500/15 text-amber-100 hover:bg-amber-500/25"
+                                    : "border border-red-500/40 bg-red-600/20 text-red-100 hover:bg-red-600/30"
+                            )}
+                        >
+                            {chatConfirmAction?.kind === "block" ? "Block" : "Delete"}
+                        </button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }

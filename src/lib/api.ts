@@ -29,6 +29,7 @@ export type Conversation = {
     lastPreview: string;
     lastBodyIsEncrypted: 0 | 1;
     unreadCount: number;
+    blocked?: boolean;
 };
 
 export type ListConversationsRes = ApiOk<{ conversations: Conversation[] }>;
@@ -54,8 +55,24 @@ export type ListMessagesRes = ApiOk<{ messages: Message[] }>;
 export type SendSmsRes = ApiOk<{ id: string }>;
 
 export type ListContactsRes = ApiOk<{
-    contacts: Array<{ displayName: string; rawNumber: string | null; norm: string }>;
+    contacts: Array<{
+        displayName: string;
+        rawNumber: string | null;
+        norm: string;
+        source?: "android" | "web";
+        nameLocked?: boolean;
+    }>;
 }>;
+
+export type BlockedChat = {
+    threadId: string;
+    peer: string;
+    peerName: string | null;
+    note: string | null;
+    blockedAt: number;
+};
+
+export type ListBlockedChatsRes = ApiOk<{ blockedChats: BlockedChat[] }>;
 
 export type TelegramStatusRes = ApiOk<{
     configured: boolean;
@@ -206,6 +223,44 @@ export async function markThreadRead(
     });
 }
 
+export async function listBlockedChats(
+    pairToken: string
+): Promise<ListBlockedChatsRes> {
+    return apiFetch("/api/sms/blocked-chats", { pairToken });
+}
+
+export async function blockThread(
+    pairToken: string,
+    params: { threadId: string; peer?: string | null; note?: string | null }
+): Promise<ApiOk<{ blockedChat: BlockedChat }>> {
+    return apiFetch(`/api/sms/threads/${encodeURIComponent(params.threadId)}/block`, {
+        method: "POST",
+        pairToken,
+        body: JSON.stringify({ peer: params.peer, note: params.note }),
+    });
+}
+
+export async function unblockThread(
+    pairToken: string,
+    threadId: string
+): Promise<ApiOk<{ deleted: number }>> {
+    return apiFetch(`/api/sms/threads/${encodeURIComponent(threadId)}/unblock`, {
+        method: "POST",
+        pairToken,
+    });
+}
+
+export async function deleteThread(
+    pairToken: string,
+    threadId: string
+): Promise<ApiOk<{ deletedMessages: number; deletedConversations: number }>> {
+    return apiFetch(`/api/sms/threads/${encodeURIComponent(threadId)}/delete`, {
+        method: "POST",
+        pairToken,
+        body: JSON.stringify({ confirm: true }),
+    });
+}
+
 export async function sendSms(
     pairToken: string,
     params: { to: string; body: string; simSlotIndex?: 0 | 1; subscriptionId?: number }
@@ -226,6 +281,17 @@ export async function listContacts(
     if (query) qs.set("query", query);
     qs.set("limit", String(limit));
     return apiFetch(`/api/contacts?${qs.toString()}`, { pairToken });
+}
+
+export async function upsertContact(
+    pairToken: string,
+    params: { displayName: string; number: string }
+): Promise<ApiOk<{ contact: ListContactsRes["contacts"][number] }>> {
+    return apiFetch("/api/contacts/upsert", {
+        method: "POST",
+        pairToken,
+        body: JSON.stringify(params),
+    });
 }
 
 export async function pushSubscribe(

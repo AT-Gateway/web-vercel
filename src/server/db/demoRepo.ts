@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import type { AppConfig } from '../config';
 import type {
+  BlockedChatRow,
+  ContactRow,
   ConversationRow,
   DeviceType,
   JoinCodeRow,
@@ -26,6 +28,8 @@ type DemoContact = {
   rawNumber: string | null;
   norm: string;
   tail: string;
+  source?: 'android' | 'web';
+  nameLocked?: boolean;
 };
 
 type DemoDevice = {
@@ -48,6 +52,7 @@ type DemoState = {
   telegramPairingSettings: Map<string, TelegramPairingSettings>;
   telegramLinkCodes: Map<string, { pairingId: string; expiresAt: number }>;
   telegramSubscriptions: TelegramChatSubscription[];
+  blockedChats: Map<string, { peer: string; note: string | null; blockedAt: number }>;
 };
 
 function isDemoPairing(cfg: DemoConfig, pairingId: string | null | undefined) {
@@ -122,6 +127,8 @@ function makeDemoState(cfg: DemoConfig): DemoState {
       rawNumber: c.number,
       norm,
       tail,
+      source: 'android' as const,
+      nameLocked: false,
     };
   });
 
@@ -280,6 +287,7 @@ function makeDemoState(cfg: DemoConfig): DemoState {
     telegramPairingSettings: new Map(),
     telegramLinkCodes: new Map(),
     telegramSubscriptions: [],
+    blockedChats: new Map(),
   };
 }
 
@@ -327,19 +335,54 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
     return state.contacts.find((c) => c.norm === norm || c.tail === tail)?.displayName ?? null;
   };
 
-  const addOrUpdateContact = (gatewayDeviceId: string, number: string, name: string) => {
+  const mapDemoContact = (c: DemoContact): ContactRow => ({
+    displayName: c.displayName,
+    rawNumber: c.rawNumber,
+    norm: c.norm,
+    source: c.source === 'web' ? 'web' : 'android',
+    nameLocked: c.nameLocked === true,
+  });
+
+  const addOrUpdateContact = (
+    gatewayDeviceId: string,
+    number: string,
+    name: string,
+    opts?: { source?: 'android' | 'web'; nameLocked?: boolean }
+  ) => {
     if (!isDemoGateway(cfg, gatewayDeviceId)) return false;
     const { norm, tail } = normalizePhone(number);
     if (!norm) return true;
     const existing = state.contacts.find((c) => c.norm === norm);
     if (existing) {
-      existing.displayName = name;
+      if (!existing.nameLocked || opts?.nameLocked) existing.displayName = name;
       existing.rawNumber = number;
       existing.tail = tail;
+      if (opts?.source) existing.source = opts.source;
+      if (typeof opts?.nameLocked === 'boolean') existing.nameLocked = opts.nameLocked;
     } else {
-      state.contacts.push({ displayName: name, rawNumber: number, norm, tail });
+      state.contacts.push({
+        displayName: name,
+        rawNumber: number,
+        norm,
+        tail,
+        source: opts?.source ?? 'android',
+        nameLocked: opts?.nameLocked ?? false,
+      });
     }
     return true;
+  };
+
+  const blockedKey = (peerOrThreadId: string) => threadIdFor(peerOrThreadId);
+
+  const isDemoThreadBlocked = (peerOrThreadId: string) => {
+    const key = blockedKey(peerOrThreadId);
+    const { norm, tail } = normalizePhone(peerOrThreadId);
+    return (
+      state.blockedChats.has(key) ||
+      state.blockedChats.has(peerOrThreadId) ||
+      Boolean(norm && state.blockedChats.has(norm)) ||
+      Boolean(tail && state.blockedChats.has(tail))
+    );
   };
 
   const pushDemoMessage = (message: MessageRow) => {
@@ -521,11 +564,26 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
 
     async replaceContactsForGateway(gatewayDeviceId: string, contacts: Array<{ number: string; name: string }>) {
       if (isDemoGateway(cfg, gatewayDeviceId)) {
-        state.contacts = [];
-        for (const c of contacts) addOrUpdateContact(gatewayDeviceId, c.number, c.name);
+        state.contacts = state.contacts.filter((c) => c.source === 'web' || c.nameLocked);
+        for (const c of contacts) addOrUpdateContact(gatewayDeviceId, c.number, c.name, { source: 'android', nameLocked: false });
         return;
       }
       return useReal('replaceContactsForGateway', gatewayDeviceId, contacts);
+    },
+
+    async upsertContactForGateway(gatewayDeviceId: string, contact: { number: string; displayName: string }) {
+      if (isDemoGateway(cfg, gatewayDeviceId)) {
+        const ok = addOrUpdateContact(gatewayDeviceId, contact.number, contact.displayName, {
+          source: 'web',
+          nameLocked: true,
+        });
+        if (!ok) return useReal('upsertContactForGateway', gatewayDeviceId, contact);
+        const { norm } = normalizePhone(contact.number);
+        const saved = state.contacts.find((c) => c.norm === norm);
+        if (!saved) throw new Error('Contact name and a valid phone number are required.');
+        return mapDemoContact(saved);
+      }
+      return useReal('upsertContactForGateway', gatewayDeviceId, contact);
     },
 
     async listContacts(gatewayDeviceId: string, limit: number) {
@@ -533,7 +591,7 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
         return [...state.contacts]
           .sort((a, b) => a.displayName.localeCompare(b.displayName))
           .slice(0, limit)
-          .map(({ displayName, rawNumber, norm }) => ({ displayName, rawNumber, norm }));
+          .map(mapDemoContact);
       }
       return useReal('listContacts', gatewayDeviceId, limit);
     },
@@ -552,7 +610,7 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
           })
           .sort((a, b) => a.displayName.localeCompare(b.displayName))
           .slice(0, limit)
-          .map(({ displayName, rawNumber, norm }) => ({ displayName, rawNumber, norm }));
+          .map(mapDemoContact);
       }
       return useReal('searchContacts', gatewayDeviceId, query, limit);
     },
@@ -576,11 +634,12 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
           .map((msg) => ({
             threadId: msg.threadId || threadIdFor(msg.peer),
             peer: msg.peer,
-            peerName: msg.peerName ?? contactName(msg.peer),
+            peerName: contactName(msg.peer) ?? msg.peerName,
             lastTs: msg.ts,
             lastPreview: safePreview(msg.body, msg.bodyIsEncrypted),
             lastBodyIsEncrypted: msg.bodyIsEncrypted,
             unreadCount: unreadCountForThread(msg.threadId || threadIdFor(msg.peer)),
+            blocked: isDemoThreadBlocked(msg.threadId || threadIdFor(msg.peer)),
           }));
       }
       return useReal('listConversations', pairingId, limit);
@@ -592,7 +651,7 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
           .reverse()
           .find((m) => (m.threadId || threadIdFor(m.peer)) === threadId || m.peer === threadId);
         if (!msg) return null;
-        return { peer: msg.peer, peerName: msg.peerName ?? contactName(msg.peer) };
+        return { peer: msg.peer, peerName: contactName(msg.peer) ?? msg.peerName };
       }
       return useReal('resolvePeerByThreadId', pairingId, threadId);
     },
@@ -603,6 +662,71 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
         return { ok: true as const };
       }
       return useReal('markThreadRead', pairingId, threadId);
+    },
+
+    async listBlockedChats(pairingId: string): Promise<BlockedChatRow[]> {
+      if (isDemoPairing(cfg, pairingId)) {
+        return [...state.blockedChats.entries()]
+          .map(([threadId, row]) => ({
+            threadId,
+            peer: row.peer,
+            peerName: contactName(row.peer),
+            note: row.note,
+            blockedAt: row.blockedAt,
+          }))
+          .sort((a, b) => b.blockedAt - a.blockedAt);
+      }
+      return useReal('listBlockedChats', pairingId);
+    },
+
+    async isThreadBlocked(pairingId: string, peerOrThreadId: string) {
+      if (isDemoPairing(cfg, pairingId)) return isDemoThreadBlocked(peerOrThreadId);
+      return useReal('isThreadBlocked', pairingId, peerOrThreadId);
+    },
+
+    async blockThread(input: { pairingId: string; threadId: string; peer?: string | null; note?: string | null }) {
+      if (isDemoPairing(cfg, input.pairingId)) {
+        const resolved = await repo.resolvePeerByThreadId(input.pairingId, input.threadId);
+        const peer = resolved?.peer ?? input.peer ?? input.threadId;
+        const key = blockedKey(peer || input.threadId);
+        const blockedAt = Date.now();
+        const note = input.note ? String(input.note).trim().slice(0, 300) : null;
+        state.blockedChats.set(key, { peer, note, blockedAt });
+        return {
+          threadId: key,
+          peer,
+          peerName: contactName(peer),
+          note,
+          blockedAt,
+        };
+      }
+      return useReal('blockThread', input);
+    },
+
+    async unblockThread(pairingId: string, threadId: string) {
+      if (isDemoPairing(cfg, pairingId)) {
+        const keys = new Set([threadId, blockedKey(threadId)]);
+        const { norm, tail } = normalizePhone(threadId);
+        if (norm) keys.add(norm);
+        if (tail) keys.add(tail);
+        let deleted = 0;
+        for (const key of keys) {
+          if (state.blockedChats.delete(key)) deleted += 1;
+        }
+        return { deleted };
+      }
+      return useReal('unblockThread', pairingId, threadId);
+    },
+
+    async deleteThread(pairingId: string, threadId: string) {
+      if (isDemoPairing(cfg, pairingId)) {
+        const before = state.messages.length;
+        const deleted = state.messages.filter((m) => messageMatchesThread(m, threadId));
+        state.messages = state.messages.filter((m) => !messageMatchesThread(m, threadId));
+        for (const msg of deleted) state.readAtByThread.delete(msg.threadId || threadIdFor(msg.peer));
+        return { deletedMessages: before - state.messages.length, deletedConversations: deleted.length ? 1 : 0 };
+      }
+      return useReal('deleteThread', pairingId, threadId);
     },
 
     async insertMessage(input: {
@@ -644,6 +768,7 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
 
     async tryInsertMessage(input: Parameters<Repo['insertMessage']>[0]) {
       if (isDemoPairing(cfg, input.pairingId) || isDemoGateway(cfg, input.gatewayDeviceId)) {
+        if (input.pairingId && isDemoThreadBlocked(input.peer)) return { inserted: false };
         const exists = state.messages.some((m) => m.id === input.id);
         if (!exists) await repo.insertMessage(input);
         return { inserted: !exists };
@@ -658,7 +783,7 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
           .filter((m) => messageMatchesThread(m, thread))
           .sort((a, b) => a.ts - b.ts)
           .slice(-limit)
-          .map((m) => ({ ...m, peerName: m.peerName ?? contactName(m.peer) }));
+          .map((m) => ({ ...m, peerName: contactName(m.peer) ?? m.peerName }));
       }
       return useReal('listMessages', pairingId, threadIdOrPeer, limit);
     },

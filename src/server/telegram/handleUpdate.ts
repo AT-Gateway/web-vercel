@@ -443,6 +443,11 @@ export async function handleTelegramUpdate(
         await repo.createPairing({ pairingId, gatewayDeviceId, gatewayPubSpkiB64: 'AA==' });
       }
 
+      if (await repo.isThreadBlocked(pairingId, toNumber)) {
+        await send('Blocked chat. Unblock it in the web app before sending.');
+        return;
+      }
+
       const simSlotIndex = cmd.simSlotIndex ?? session.defaultSimSlotIndex;
       const { norm, tail } = repo.normalizePhone(toNumber);
 
@@ -487,6 +492,11 @@ export async function handleTelegramUpdate(
       if (!pairingId) {
         pairingId = randomUUID();
         await repo.createPairing({ pairingId, gatewayDeviceId, gatewayPubSpkiB64: 'AA==' });
+      }
+
+      if (await repo.isThreadBlocked(pairingId, session.lastPeer)) {
+        await send('Blocked chat. Unblock it in the web app before sending.');
+        return;
       }
 
       const { norm, tail } = repo.normalizePhone(session.lastPeer);

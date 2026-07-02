@@ -30,6 +30,50 @@ export async function registerSmsRoutes(app: FastifyInstance, repo: ReturnType<t
     return repo.markThreadRead(p.pairingId, threadId);
   });
 
+  app.get('/api/sms/blocked-chats', async (req) => {
+    const p = req.pairAuth!;
+    const blockedChats = await repo.listBlockedChats(p.pairingId);
+    return { ok: true, blockedChats };
+  });
+
+  app.post('/api/sms/threads/:threadId/block', async (req, reply) => {
+    const p = req.pairAuth!;
+    const threadId = String((req.params as any)?.threadId ?? '').trim();
+    const body = (req.body ?? {}) as any;
+    const peer = body.peer ? String(body.peer).trim() : null;
+    const note = body.note ? String(body.note).trim() : null;
+
+    if (!threadId && !peer) return reply.code(400).send({ ok: false, error: 'Missing threadId or peer' });
+
+    const blockedChat = await repo.blockThread({ pairingId: p.pairingId, threadId: threadId || peer || '', peer, note });
+    hub.emit(p.pairingId, 'chats', { action: 'blocked', threadId: blockedChat.threadId });
+    return { ok: true, blockedChat };
+  });
+
+  app.post('/api/sms/threads/:threadId/unblock', async (req, reply) => {
+    const p = req.pairAuth!;
+    const threadId = String((req.params as any)?.threadId ?? '').trim();
+    if (!threadId) return reply.code(400).send({ ok: false, error: 'Missing threadId' });
+
+    const result = await repo.unblockThread(p.pairingId, threadId);
+    hub.emit(p.pairingId, 'chats', { action: 'unblocked', threadId });
+    return { ok: true, ...result };
+  });
+
+  app.post('/api/sms/threads/:threadId/delete', async (req, reply) => {
+    const p = req.pairAuth!;
+    const threadId = String((req.params as any)?.threadId ?? '').trim();
+    const body = (req.body ?? {}) as any;
+    if (!threadId) return reply.code(400).send({ ok: false, error: 'Missing threadId' });
+    if (body.confirm !== true) {
+      return reply.code(400).send({ ok: false, error: 'Confirmation is required' });
+    }
+
+    const result = await repo.deleteThread(p.pairingId, threadId);
+    hub.emit(p.pairingId, 'chats', { action: 'deleted', threadId });
+    return { ok: true, ...result };
+  });
+
   app.post('/api/sms/send', async (req, reply) => {
     const p = req.pairAuth!;
     const body = (req.body ?? {}) as any;
@@ -40,6 +84,9 @@ export async function registerSmsRoutes(app: FastifyInstance, repo: ReturnType<t
     const subscriptionId = typeof body.subscriptionId === 'number' ? Number(body.subscriptionId) : null;
 
     if (!to || !text) return reply.code(400).send({ ok: false, error: 'Missing to or body' });
+    if (await repo.isThreadBlocked(p.pairingId, to)) {
+      return reply.code(409).send({ ok: false, error: 'This chat is blocked. Unblock it before sending.' });
+    }
 
     const id = randomUUID();
     const { norm, tail } = repo.normalizePhone(to);

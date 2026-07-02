@@ -123,7 +123,7 @@ export async function buildApiRuntime(): Promise<ApiRuntime> {
   await registerHealthRoutes(app, cfg);
   await registerPairingRoutes(app, cfg, repo);
   await registerSmsRoutes(app, repo, hub);
-  await registerContactsRoutes(app, repo);
+  await registerContactsRoutes(app, repo, hub);
   await registerPushRoutes(app, cfg, repo);
 
   await registerAndroidRoutes(app, cfg, repo, hub);

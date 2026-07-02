@@ -51,6 +51,23 @@ export type ConversationRow = {
   lastPreview: string;
   lastBodyIsEncrypted: 0 | 1;
   unreadCount: number;
+  blocked: boolean;
+};
+
+export type ContactRow = {
+  displayName: string;
+  rawNumber: string | null;
+  norm: string;
+  source: 'android' | 'web';
+  nameLocked: boolean;
+};
+
+export type BlockedChatRow = {
+  threadId: string;
+  peer: string;
+  peerName: string | null;
+  note: string | null;
+  blockedAt: number;
 };
 
 export type MessageRow = {
@@ -106,6 +123,21 @@ export type TelegramPairingSettings = {
   alertsEnabled: boolean;
   updatedAt: number | null;
 };
+
+function threadIdFromParts(peer: string, norm?: string | null, tail?: string | null) {
+  return tail || norm || peer;
+}
+
+function normalizePeerForThread(peer: string) {
+  const trimmed = String(peer ?? '').trim();
+  const { norm, tail } = normalizePhone(trimmed);
+  return {
+    peer: trimmed,
+    norm: norm || null,
+    tail: tail || null,
+    threadId: threadIdFromParts(trimmed, norm || null, tail || null),
+  };
+}
 
 export function createRepo(pool: Pool) {
   // ---------------- gateway devices ----------------
@@ -709,7 +741,15 @@ export function createRepo(pool: Pool) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('DELETE FROM contacts WHERE gateway_device_id = $1', [gatewayDeviceId]);
+      await client.query(
+        `
+        DELETE FROM contacts
+        WHERE gateway_device_id = $1
+          AND source <> 'web'
+          AND name_locked = false
+        `,
+        [gatewayDeviceId]
+      );
 
       for (const c of contacts) {
         const name = String(c?.name ?? '').trim();
@@ -725,8 +765,15 @@ export function createRepo(pool: Pool) {
           VALUES ($1, $2, $3, $4, $5, now())
           ON CONFLICT (gateway_device_id, norm) DO UPDATE
             SET tail = EXCLUDED.tail,
-                display_name = EXCLUDED.display_name,
+                display_name = CASE
+                  WHEN contacts.name_locked THEN contacts.display_name
+                  ELSE EXCLUDED.display_name
+                END,
                 raw_number = EXCLUDED.raw_number,
+                source = CASE
+                  WHEN contacts.name_locked THEN contacts.source
+                  ELSE 'android'
+                END,
                 updated_at = now();
           `,
           [gatewayDeviceId, norm, tail, name, num]
@@ -742,10 +789,59 @@ export function createRepo(pool: Pool) {
     }
   }
 
-  async function listContacts(gatewayDeviceId: string, limit: number) {
+  async function upsertContactForGateway(
+    gatewayDeviceId: string,
+    contact: { number: string; displayName: string }
+  ): Promise<ContactRow> {
+    await upsertGatewayDevice(gatewayDeviceId);
+
+    const displayName = String(contact.displayName ?? '').trim();
+    const number = String(contact.number ?? '').trim();
+    const { norm, tail } = normalizePhone(number);
+    if (!displayName || !norm) {
+      throw new Error('Contact name and a valid phone number are required.');
+    }
+
     const r = await pool.query(
       `
-      SELECT display_name, raw_number, norm
+      INSERT INTO contacts(gateway_device_id, norm, tail, display_name, raw_number, source, name_locked, updated_at)
+      VALUES ($1, $2, $3, $4, $5, 'web', true, now())
+      ON CONFLICT (gateway_device_id, norm) DO UPDATE
+        SET tail = EXCLUDED.tail,
+            display_name = EXCLUDED.display_name,
+            raw_number = EXCLUDED.raw_number,
+            source = 'web',
+            name_locked = true,
+            updated_at = now()
+      RETURNING display_name, raw_number, norm, source, name_locked
+      `,
+      [gatewayDeviceId, norm, tail, displayName, number]
+    );
+
+    const row = r.rows[0] as any;
+    return {
+      displayName: String(row.display_name),
+      rawNumber: row.raw_number ? String(row.raw_number) : null,
+      norm: String(row.norm),
+      source: row.source === 'web' ? 'web' : 'android',
+      nameLocked: row.name_locked === true,
+    };
+  }
+
+  function mapContact(row: any): ContactRow {
+    return {
+      displayName: String(row.display_name),
+      rawNumber: row.raw_number ? String(row.raw_number) : null,
+      norm: String(row.norm),
+      source: row.source === 'web' ? 'web' : 'android',
+      nameLocked: row.name_locked === true,
+    };
+  }
+
+  async function listContacts(gatewayDeviceId: string, limit: number): Promise<ContactRow[]> {
+    const r = await pool.query(
+      `
+      SELECT display_name, raw_number, norm, source, name_locked
       FROM contacts
       WHERE gateway_device_id = $1
       ORDER BY display_name ASC
@@ -753,18 +849,14 @@ export function createRepo(pool: Pool) {
       `,
       [gatewayDeviceId, limit]
     );
-    return r.rows.map((row: any) => ({
-      displayName: String(row.display_name),
-      rawNumber: row.raw_number ? String(row.raw_number) : null,
-      norm: String(row.norm),
-    }));
+    return r.rows.map(mapContact);
   }
 
-  async function searchContacts(gatewayDeviceId: string, query: string, limit: number) {
+  async function searchContacts(gatewayDeviceId: string, query: string, limit: number): Promise<ContactRow[]> {
     const q = `%${query}%`;
     const r = await pool.query(
       `
-      SELECT display_name, raw_number, norm
+      SELECT display_name, raw_number, norm, source, name_locked
       FROM contacts
       WHERE gateway_device_id = $1
         AND (display_name ILIKE $2 OR raw_number ILIKE $2 OR norm ILIKE $2)
@@ -773,11 +865,7 @@ export function createRepo(pool: Pool) {
       `,
       [gatewayDeviceId, q, limit]
     );
-    return r.rows.map((row: any) => ({
-      displayName: String(row.display_name),
-      rawNumber: row.raw_number ? String(row.raw_number) : null,
-      norm: String(row.norm),
-    }));
+    return r.rows.map(mapContact);
   }
 
   async function lookupContactName(gatewayDeviceId: string, numberRaw: string): Promise<string | null> {
@@ -880,11 +968,13 @@ export function createRepo(pool: Pool) {
         l.last_message_preview,
         l.last_body_is_encrypted,
         p.gateway_device_id,
-        COALESCE(ct_exact.display_name, ct_tail.display_name) AS peer_name
+        COALESCE(ct_exact.display_name, ct_tail.display_name) AS peer_name,
+        (b.thread_id IS NOT NULL) AS blocked
       FROM latest l
       JOIN pairings p ON p.id = l.pairing_id
       LEFT JOIN contacts ct_exact ON ct_exact.gateway_device_id = p.gateway_device_id AND ct_exact.norm = l.peer_norm
       LEFT JOIN contacts ct_tail ON ct_tail.gateway_device_id = p.gateway_device_id AND ct_tail.tail = l.peer_tail
+      LEFT JOIN blocked_chats b ON b.pairing_id = l.pairing_id AND b.thread_id = l.thread_id
       ORDER BY l.last_message_ts_ms DESC
       LIMIT $2
       `,
@@ -899,6 +989,7 @@ export function createRepo(pool: Pool) {
       lastPreview: String(row.last_message_preview ?? ''),
       lastBodyIsEncrypted: row.last_body_is_encrypted ? 1 : 0,
       unreadCount: 0,
+      blocked: row.blocked === true,
     }));
   }
 
@@ -944,6 +1035,166 @@ export function createRepo(pool: Pool) {
     void pairingId;
     void threadId;
     return { ok: true };
+  }
+
+  // ---------------- chat management ----------------
+
+  function threadWhereClause(alias: string) {
+    return `
+      (
+        ${alias}.peer = $2
+        OR COALESCE(${alias}.peer_tail, ${alias}.peer_norm, ${alias}.peer) = $2
+        OR ($3::text IS NOT NULL AND ${alias}.peer_norm = $3)
+        OR ($4::text IS NOT NULL AND ${alias}.peer_tail = $4)
+      )
+    `;
+  }
+
+  async function listBlockedChats(pairingId: string): Promise<BlockedChatRow[]> {
+    const r = await pool.query(
+      `
+      SELECT
+        b.thread_id,
+        b.peer,
+        b.note,
+        EXTRACT(EPOCH FROM b.blocked_at) * 1000 AS blocked_at_ms,
+        COALESCE(ct_exact.display_name, ct_tail.display_name) AS peer_name
+      FROM blocked_chats b
+      JOIN pairings p ON p.id = b.pairing_id
+      LEFT JOIN contacts ct_exact ON ct_exact.gateway_device_id = p.gateway_device_id AND ct_exact.norm = b.peer_norm
+      LEFT JOIN contacts ct_tail ON ct_tail.gateway_device_id = p.gateway_device_id AND ct_tail.tail = b.peer_tail
+      WHERE b.pairing_id = $1
+      ORDER BY b.blocked_at DESC
+      `,
+      [pairingId]
+    );
+
+    return r.rows.map((row: any) => ({
+      threadId: String(row.thread_id),
+      peer: String(row.peer),
+      peerName: row.peer_name ? String(row.peer_name) : null,
+      note: row.note ? String(row.note) : null,
+      blockedAt: Number(row.blocked_at_ms),
+    }));
+  }
+
+  async function isThreadBlocked(pairingId: string, peerOrThreadId: string): Promise<boolean> {
+    const p = normalizePeerForThread(peerOrThreadId);
+    const r = await pool.query(
+      `
+      SELECT 1
+      FROM blocked_chats
+      WHERE pairing_id = $1
+        AND (
+          thread_id = $2
+          OR peer = $2
+          OR ($3::text IS NOT NULL AND peer_norm = $3)
+          OR ($4::text IS NOT NULL AND peer_tail = $4)
+        )
+      LIMIT 1
+      `,
+      [pairingId, p.threadId || p.peer, p.norm, p.tail]
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  async function blockThread(input: {
+    pairingId: string;
+    threadId: string;
+    peer?: string | null;
+    note?: string | null;
+  }): Promise<BlockedChatRow> {
+    const threadId = String(input.threadId ?? '').trim();
+    const resolved = threadId ? await resolvePeerByThreadId(input.pairingId, threadId) : null;
+    const peerRaw = String(resolved?.peer ?? input.peer ?? threadId).trim();
+    const peer = peerRaw || threadId;
+    const normalized = normalizePeerForThread(peer);
+    const effectiveThreadId = threadId || normalized.threadId;
+    const canonicalThreadId = normalized.tail || normalized.norm || effectiveThreadId;
+    const note = input.note ? String(input.note).trim().slice(0, 300) : null;
+
+    const r = await pool.query(
+      `
+      INSERT INTO blocked_chats(pairing_id, thread_id, peer, peer_norm, peer_tail, note, blocked_at)
+      VALUES ($1, $2, $3, $4, $5, $6, now())
+      ON CONFLICT (pairing_id, thread_id) DO UPDATE
+        SET peer = EXCLUDED.peer,
+            peer_norm = EXCLUDED.peer_norm,
+            peer_tail = EXCLUDED.peer_tail,
+            note = EXCLUDED.note
+      RETURNING thread_id, peer, note, EXTRACT(EPOCH FROM blocked_at) * 1000 AS blocked_at_ms
+      `,
+      [input.pairingId, canonicalThreadId, peer, normalized.norm, normalized.tail, note]
+    );
+
+    const row = r.rows[0] as any;
+    const peerName = await lookupContactName(
+      (await getPairingById(input.pairingId))?.gatewayDeviceId ?? '',
+      String(row.peer)
+    ).catch(() => null);
+
+    return {
+      threadId: String(row.thread_id),
+      peer: String(row.peer),
+      peerName,
+      note: row.note ? String(row.note) : null,
+      blockedAt: Number(row.blocked_at_ms),
+    };
+  }
+
+  async function unblockThread(pairingId: string, threadId: string): Promise<{ deleted: number }> {
+    const p = normalizePeerForThread(threadId);
+    const r = await pool.query(
+      `
+      DELETE FROM blocked_chats
+      WHERE pairing_id = $1
+        AND (
+          thread_id = $2
+          OR peer = $2
+          OR ($3::text IS NOT NULL AND peer_norm = $3)
+          OR ($4::text IS NOT NULL AND peer_tail = $4)
+        )
+      `,
+      [pairingId, p.threadId || p.peer, p.norm, p.tail]
+    );
+    return { deleted: r.rowCount ?? 0 };
+  }
+
+  async function deleteThread(pairingId: string, threadId: string): Promise<{ deletedMessages: number; deletedConversations: number }> {
+    const p = normalizePeerForThread(threadId);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const deletedMessages = await client.query(
+        `
+        DELETE FROM messages m
+        WHERE m.pairing_id = $1
+          AND ${threadWhereClause('m')}
+        `,
+        [pairingId, p.threadId || p.peer, p.norm, p.tail]
+      );
+
+      const deletedConversations = await client.query(
+        `
+        DELETE FROM conversations c
+        WHERE c.pairing_id = $1
+          AND ${threadWhereClause('c')}
+        `,
+        [pairingId, p.threadId || p.peer, p.norm, p.tail]
+      );
+
+      await client.query('COMMIT');
+      return {
+        deletedMessages: deletedMessages.rowCount ?? 0,
+        deletedConversations: deletedConversations.rowCount ?? 0,
+      };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
 
@@ -1317,6 +1568,7 @@ export function createRepo(pool: Pool) {
 
     // contacts
     replaceContactsForGateway,
+    upsertContactForGateway,
     listContacts,
     searchContacts,
     lookupContactName,
@@ -1325,6 +1577,11 @@ export function createRepo(pool: Pool) {
     listConversations,
     resolvePeerByThreadId,
     markThreadRead,
+    listBlockedChats,
+    isThreadBlocked,
+    blockThread,
+    unblockThread,
+    deleteThread,
 
     // messages
     insertMessage,
