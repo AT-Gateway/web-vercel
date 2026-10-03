@@ -1,7 +1,7 @@
 /**
  * Generates every app icon asset from one geometry source.
  *
- * Mark: a large message bubble with a send/receive pair of arrows (↗ ↙) cut
+ * Mark: a large message bubble with a send/receive pair of arrows (⇄) cut
  * out of its top-left corner — an SMS gateway in one glyph.
  *
  * Follows the iOS 26/27 app icon rules:
@@ -31,15 +31,17 @@ const BUBBLE = `
   <path d="M290 690C290 760 264 790 232 806C310 812 384 794 432 766Z"/>`;
 
 /*
- * Relay arrows on a local 220×220 grid: ↗ (send) on the line x+y=140 and ↙
- * (receive) as its 180° rotation about (110,110), landing on x+y=300. Each is a
- * round-capped shaft with a solid, softly rounded arrowhead.
+ * Relay arrows (local grid), in the SF Symbols "arrow.left.arrow.right" style:
+ * two short, offset shafts with open, round-capped chevron heads — send → and
+ * receive ←.
  */
 const ARROWS = `
-  <path d="M16 124L80 60M204 96L140 160" fill="none" stroke-width="30" stroke-linecap="round"/>
-  <path d="M116 24L101.9 89.1L50.9 38.1Z M104 196L118.1 130.9L169.1 181.9Z" stroke-width="10" stroke-linejoin="round"/>`;
-// Placed in the bubble's top-left corner.
-const ARROWS_TRANSFORM = "translate(280 290) scale(1.2)";
+  <g fill="none" stroke-width="28" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M80 40H200M170 10L202 40L170 70"/>
+    <path d="M160 112H40M70 82L38 112L70 142"/>
+  </g>`;
+// Tucked into the bubble's top-left corner.
+const ARROWS_TRANSFORM = "translate(250 326) scale(0.92)";
 
 /** Mask: bubble in white, relay arrows punched out. */
 const glyphMask = (id) => `
@@ -150,11 +152,20 @@ await out(path.join(SRC_DIR, "AppIcon-1024-tinted.png"), png(full(tinted), 1024)
 // Web / PWA
 await out(path.join(PUBLIC_DIR, "icon.svg"), full(light));
 await out(path.join(PUBLIC_DIR, "favicon.svg"), full(light, { rounded: true }));
-await out(path.join(PUBLIC_DIR, "favicon-32.png"), png(full(light, { rounded: true }), 32));
+await out(
+    path.join(PUBLIC_DIR, "favicon-32.png"),
+    png(full(light, { rounded: true }), 32)
+);
 // iOS applies its own mask to touch icons, so this one stays square and opaque.
 await out(path.join(PUBLIC_DIR, "apple-touch-icon.png"), png(full(light), 180));
-await out(path.join(PUBLIC_DIR, "icon-192.png"), png(full(light, { rounded: true }), 192));
-await out(path.join(PUBLIC_DIR, "icon-512.png"), png(full(light, { rounded: true }), 512));
+await out(
+    path.join(PUBLIC_DIR, "icon-192.png"),
+    png(full(light, { rounded: true }), 192)
+);
+await out(
+    path.join(PUBLIC_DIR, "icon-512.png"),
+    png(full(light, { rounded: true }), 512)
+);
 await out(path.join(PUBLIC_DIR, "icon-maskable-512.png"), png(full(light), 512));
 await out(path.join(PUBLIC_DIR, "badge-96.png"), png(badge(), 96));
 
@@ -180,24 +191,41 @@ const SPLASH_DEVICES = [
     [744, 1133, 2], // iPad mini
 ];
 
-const SPLASH_THEMES = { light: "#FFFFFF", dark: "#000000" };
+const SPLASH_THEMES = {
+    light: { bg: "#FFFFFF", title: "#000000", subtitle: "rgba(60,60,67,0.6)" },
+    dark: { bg: "#000000", title: "#FFFFFF", subtitle: "rgba(235,235,245,0.6)" },
+};
+// Keep in sync with src/app/splash.ts and the .app-splash styles in globals.css.
+const SPLASH_TITLE = "SMS Gateway";
+const SPLASH_SUBTITLE = "Your texts, on every device";
+const SPLASH_FONT =
+    "SF Pro Display, SF Pro Text, Helvetica Neue, Helvetica, Arial, sans-serif";
 const iconPngB64 = Buffer.from(png(full(light), 512)).toString("base64");
 
-function splash(w, h, bg) {
-    const icon = Math.round(Math.min(w, h) * 0.26);
+/** Mirrors the in-page splash, in CSS px scaled by the device pixel ratio. */
+function splash(cw, ch, dpr, theme) {
+    const w = cw * dpr;
+    const h = ch * dpr;
+    const icon = Math.min(112, Math.max(64, Math.min(cw, ch) * 0.2)); // clamp(64px, 20vmin, 112px)
+    // Group: icon, 18 gap, 28 title line, 4 gap, 20 subtitle line — vertically centered.
+    const groupH = icon + 18 + 28 + 4 + 20;
+    const top = (ch - groupH) / 2;
+    const iconX = (cw - icon) / 2;
+    const titleBaseline = top + icon + 18 + 21;
+    const subtitleBaseline = top + icon + 18 + 28 + 4 + 15;
     const r = icon * 0.2237;
-    const x = (w - icon) / 2;
-    const y = (h - icon) / 2;
-    return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
-  <rect width="${w}" height="${h}" fill="${bg}"/>
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${cw} ${ch}">
+  <rect width="${cw}" height="${ch}" fill="${theme.bg}"/>
   <defs>
-    <clipPath id="i"><rect x="${x}" y="${y}" width="${icon}" height="${icon}" rx="${r}"/></clipPath>
-    <filter id="s" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="${icon * 0.06}" stdDeviation="${icon * 0.08}" flood-opacity="0.18"/>
+    <clipPath id="i"><rect x="${iconX}" y="${top}" width="${icon}" height="${icon}" rx="${r}"/></clipPath>
+    <filter id="s" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="6" stdDeviation="10" flood-opacity="0.16"/>
     </filter>
   </defs>
-  <rect x="${x}" y="${y}" width="${icon}" height="${icon}" rx="${r}" fill="${bg}" filter="url(#s)"/>
-  <image href="data:image/png;base64,${iconPngB64}" x="${x}" y="${y}" width="${icon}" height="${icon}" clip-path="url(#i)"/>
+  <rect x="${iconX}" y="${top}" width="${icon}" height="${icon}" rx="${r}" fill="${theme.bg}" filter="url(#s)"/>
+  <image href="data:image/png;base64,${iconPngB64}" x="${iconX}" y="${top}" width="${icon}" height="${icon}" clip-path="url(#i)"/>
+  <text x="${cw / 2}" y="${titleBaseline}" text-anchor="middle" font-family="${SPLASH_FONT}" font-size="22" font-weight="600" letter-spacing="-0.44" fill="${theme.title}">${SPLASH_TITLE}</text>
+  <text x="${cw / 2}" y="${subtitleBaseline}" text-anchor="middle" font-family="${SPLASH_FONT}" font-size="15" fill="${theme.subtitle}">${SPLASH_SUBTITLE}</text>
 </svg>`;
 }
 
@@ -205,9 +233,14 @@ const splashLinks = [];
 for (const [cw, ch, dpr] of SPLASH_DEVICES) {
     const w = cw * dpr;
     const h = ch * dpr;
-    for (const [theme, bg] of Object.entries(SPLASH_THEMES)) {
+    for (const [theme, colors] of Object.entries(SPLASH_THEMES)) {
         const file = `splash/launch-${w}x${h}-${theme}.png`;
-        await out(path.join(PUBLIC_DIR, file), new Resvg(splash(w, h, bg)).render().asPng());
+        const svgText = splash(cw, ch, dpr, colors);
+        const rendered = new Resvg(svgText, {
+            fitTo: { mode: "width", value: w },
+            font: { loadSystemFonts: true, defaultFontFamily: "Helvetica Neue" },
+        }).render();
+        await out(path.join(PUBLIC_DIR, file), rendered.asPng());
         splashLinks.push({
             url: `/${file}`,
             media: `(device-width: ${cw}px) and (device-height: ${ch}px) and (-webkit-device-pixel-ratio: ${dpr}) and (orientation: portrait) and (prefers-color-scheme: ${theme})`,

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { MessagesSquare, SquarePen } from "lucide-react";
+import { MessagesSquare, SquarePen, WifiOff } from "lucide-react";
 import { useIsCompact } from "@/hooks/useMediaQuery";
 import { Button } from "@/components/ios/Button";
 import { ContentUnavailable } from "@/components/ios/ContentUnavailable";
@@ -21,12 +21,30 @@ type Snapshot = Pick<
 const PUSH_MS = 420;
 const EDGE_PX = 28;
 
-/** Fades out the launch splash rendered by the root layout, then removes it. */
+/** Marks the app ready; CSS fades out the pseudo-element launch splash (globals.css). */
 function hideLaunchSplash() {
-    const el = document.getElementById("app-splash");
-    if (!el || el.dataset.hidden !== undefined) return;
-    el.dataset.hidden = "";
-    window.setTimeout(() => el.remove(), 400);
+    document.documentElement.dataset.appReady = "1";
+}
+
+function CantConnect() {
+    const { retryConnect, signOut } = useApp();
+    return (
+        <div className="bg-grouped pt-safe pb-safe flex h-dvh flex-col items-center justify-center px-6">
+            <ContentUnavailable
+                icon={<WifiOff />}
+                title="Can’t Connect"
+                description="Check your internet connection. If the gateway server was just deployed, it may take a few seconds to start."
+                actions={
+                    <>
+                        <Button onClick={retryConnect}>Try Again</Button>
+                        <Button variant="plain" tone="red" onClick={signOut}>
+                            Sign Out
+                        </Button>
+                    </>
+                }
+            />
+        </div>
+    );
 }
 
 /**
@@ -257,6 +275,7 @@ export function AppShell() {
     // The layout's launch splash covers the screen until the session is known.
     if (status === "loading") return null;
     if (status === "signedOut") return <PairingScreen />;
+    if (status === "offline") return <CantConnect />;
 
     const props = {
         onOpenSettings: openSettings,

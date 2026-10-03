@@ -13,7 +13,7 @@ function threadIdForPeer(peer) {
 // Enabled only when registered as /sw.js?cache=1 (production; see src/lib/sw.ts).
 // Bump VERSION to drop every cache from older workers.
 const CACHING = new URL(self.location.href).searchParams.get("cache") === "1";
-const VERSION = "v1";
+const VERSION = "v2";
 const SHELL_CACHE = `shell-${VERSION}`;
 const STATIC_CACHE = `static-${VERSION}`;
 const PRECACHE = [
@@ -25,8 +25,6 @@ const PRECACHE = [
     "/favicon.svg",
     "/manifest.webmanifest",
 ];
-// How long a launch waits for the network before showing the cached app.
-const NAV_TIMEOUT_MS = 2500;
 
 self.addEventListener("install", (event) => {
     if (CACHING) {
@@ -66,8 +64,7 @@ self.addEventListener("fetch", (event) => {
     // Live data is never cached.
     if (url.pathname.startsWith("/api/")) return;
 
-    // App launches/reloads: network first, falling back to the cached shell so
-    // the app (and its launch splash) opens instantly when offline or slow.
+    // App launches/reloads: network first, cached shell only when offline.
     if (req.mode === "navigate") {
         event.respondWith(navigationResponse(event));
         return;
@@ -91,20 +88,18 @@ self.addEventListener("fetch", (event) => {
 
 async function navigationResponse(event) {
     const shell = await caches.open(SHELL_CACHE);
-    const network = fetch(event.request).then((res) => {
-        // The page is a single client-rendered shell; keep "/" fresh for next launch.
+    try {
+        // Always prefer the network: a cached page could reference build files a
+        // newer deploy removed, which would leave the app unable to start.
+        const res = await fetch(event.request);
+        // The page is a single client-rendered shell; keep "/" fresh for offline launches.
         if (res.ok) event.waitUntil(shell.put("/", res.clone()));
         return res;
-    });
-    const timeout = new Promise((resolve) => setTimeout(resolve, NAV_TIMEOUT_MS));
-    try {
-        const res = await Promise.race([network, timeout]);
-        if (res) return res;
     } catch {
-        // offline — fall through to the cache
+        const cached = await shell.match("/");
+        if (cached) return cached;
+        throw new Error("offline and no cached app shell");
     }
-    const cached = await shell.match("/");
-    return cached || network;
 }
 
 async function cacheFirst(req) {

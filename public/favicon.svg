@@ -30,9 +30,11 @@
     <g fill="#fff">
   <ellipse cx="512" cy="492" rx="360" ry="282"/>
   <path d="M290 690C290 760 264 790 232 806C310 812 384 794 432 766Z"/></g>
-    <g fill="#000" stroke="#000" transform="translate(280 290) scale(1.2)">
-  <path d="M16 124L80 60M204 96L140 160" fill="none" stroke-width="30" stroke-linecap="round"/>
-  <path d="M116 24L101.9 89.1L50.9 38.1Z M104 196L118.1 130.9L169.1 181.9Z" stroke-width="10" stroke-linejoin="round"/></g>
+    <g fill="#000" stroke="#000" transform="translate(250 326) scale(0.92)">
+  <g fill="none" stroke-width="28" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M80 40H200M170 10L202 40L170 70"/>
+    <path d="M160 112H40M70 82L38 112L70 142"/>
+  </g></g>
   </mask>
     <linearGradient id="fg" x1="0" y1="210" x2="0" y2="806" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#FFFFFF"/>

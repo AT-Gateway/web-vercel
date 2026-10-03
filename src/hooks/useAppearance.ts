@@ -53,5 +53,8 @@ export function useGlassTint(): [number, (v: number) => void] {
     return [value, update];
 }
 
-/** Inline script for <head>: applies saved appearance and glass tint before first paint. */
-export const APPEARANCE_BOOT_SCRIPT = `try{var d=document.documentElement,a=localStorage.getItem("appearance");if(a==="light"||a==="dark")d.dataset.theme=a;var g=parseFloat(localStorage.getItem("glassTint"));if(g>=0&&g<=1)d.style.setProperty("--glass-tint",String(g))}catch(e){}`;
+/**
+ * Inline script for <head>: applies saved appearance and glass tint before first
+ * paint, and hides the launch splash after 10s if the app never signals ready.
+ */
+export const APPEARANCE_BOOT_SCRIPT = `try{var d=document.documentElement,a=localStorage.getItem("appearance");if(a==="light"||a==="dark")d.dataset.theme=a;var g=parseFloat(localStorage.getItem("glassTint"));if(g>=0&&g<=1)d.style.setProperty("--glass-tint",String(g))}catch(e){}setTimeout(function(){var r=document.documentElement;if(!r.getAttribute("data-app-ready"))r.setAttribute("data-app-ready","timeout")},10000);`;

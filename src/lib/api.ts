@@ -104,6 +104,21 @@ export type TelegramStatusRes = ApiOk<{
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
 
+/** API failure with the HTTP status (0 = network error or timeout). */
+export class ApiError extends Error {
+    status: number;
+    constructor(message: string, status: number) {
+        super(message);
+        this.name = "ApiError";
+        this.status = status;
+    }
+}
+
+/** The server rejected the pair token (revoked or unknown device). */
+export function isAuthError(e: unknown): boolean {
+    return e instanceof ApiError && (e.status === 401 || e.status === 403);
+}
+
 function url(path: string): string {
     if (!API_BASE) return path;
     return API_BASE.replace(/\/$/, "") + path;
@@ -134,10 +149,11 @@ async function apiFetch<T>(
         });
     } catch (err) {
         if ((err as Error)?.name === "AbortError") throw err;
-        throw new Error(
+        throw new ApiError(
             typeof navigator !== "undefined" && navigator.onLine === false
                 ? "You're offline."
-                : "Can't reach the server."
+                : "Can't reach the server.",
+            0
         );
     }
 
@@ -151,7 +167,7 @@ async function apiFetch<T>(
 
     if (!res.ok) {
         const errMsg = data?.error || data?.message || `${res.status} ${res.statusText}`;
-        throw new Error(errMsg);
+        throw new ApiError(errMsg, res.status);
     }
 
     return data as T;
@@ -185,8 +201,20 @@ export async function pairComplete(params: {
     });
 }
 
-export async function pairMe(pairToken: string): Promise<PairMeRes> {
-    return apiFetch("/api/pair/me", { pairToken });
+export async function pairMe(pairToken: string, timeoutMs = 10_000): Promise<PairMeRes> {
+    // Bounded, so app start never waits forever on a cold or unreachable server.
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+        return await apiFetch("/api/pair/me", { pairToken, signal: ac.signal });
+    } catch (e) {
+        if ((e as Error)?.name === "AbortError") {
+            throw new ApiError("The server took too long to respond.", 0);
+        }
+        throw e;
+    } finally {
+        clearTimeout(t);
+    }
 }
 
 export async function createInvite(

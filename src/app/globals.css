@@ -604,43 +604,110 @@ body:has([data-vaul-drawer][data-state="open"]) {
     outline-offset: 2px;
 }
 
-/* Launch splash (src/app/layout.tsx). Icon matches the iOS launch images: 26vmin. */
-.app-splash {
+/*
+ * Launch splash — built only from pseudo-elements, so it adds no DOM nodes and
+ * can never break React hydration (an extra element at the top of <body>
+ * collides with Next.js's streamed-metadata node and crashes the app).
+ * Painted from the first byte of HTML; AppShell sets <html data-app-ready> to
+ * fade it out, and APPEARANCE_BOOT_SCRIPT sets it after 10s as a failsafe.
+ * Sizes and text are mirrored in scripts/build-icons.mjs (iOS launch images).
+ *
+ *   html::before  background + icon
+ *   html::after   title
+ *   body::before  subtitle
+ *   body::after   spinner (appears only if loading is slow)
+ */
+html {
+    --splash-icon: clamp(64px, 20vmin, 112px);
+    /* Group = icon + 18 + 28 (title) + 4 + 20 (subtitle), centered vertically. */
+    /* Absolute (not %) so background-position and `top` use the same reference. */
+    --splash-top: calc(50vh - (var(--splash-icon) + 70px) / 2);
+    --splash-top: calc(50dvh - (var(--splash-icon) + 70px) / 2);
+}
+
+html::before,
+html::after,
+body::before,
+body::after {
     position: fixed;
-    inset: 0;
     z-index: 200;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background-color: var(--sys-bg);
+    pointer-events: none;
     transition:
         opacity 320ms ease,
         visibility 320ms ease;
 }
 
-.app-splash[data-hidden] {
+html::before {
+    content: "";
+    inset: 0;
+    pointer-events: auto;
+    background-color: var(--sys-bg);
+    /* The rounded (22.37%) variant of the app icon. */
+    background-image: url("/favicon.svg");
+    background-repeat: no-repeat;
+    background-size: var(--splash-icon) var(--splash-icon);
+    background-position: 50% var(--splash-top);
+}
+
+html::after {
+    content: "SMS Gateway";
+    left: 0;
+    right: 0;
+    top: calc(var(--splash-top) + var(--splash-icon) + 18px);
+    font-family: var(--font-sans);
+    font-size: 22px;
+    line-height: 28px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    text-align: center;
+    color: var(--sys-label);
+}
+
+body::before {
+    content: "Your texts, on every device";
+    left: 0;
+    right: 0;
+    top: calc(var(--splash-top) + var(--splash-icon) + 50px);
+    font-size: 15px;
+    line-height: 20px;
+    letter-spacing: -0.01em;
+    text-align: center;
+    color: var(--sys-label-2);
+}
+
+body::after {
+    content: "";
+    left: calc(50% - 11px);
+    top: calc(var(--splash-top) + var(--splash-icon) + 102px);
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2.5px solid var(--sys-fill);
+    border-top-color: var(--sys-label-2);
+    opacity: 0;
+    animation:
+        splash-spinner-in 400ms ease 900ms forwards,
+        splash-spin 0.8s linear infinite;
+}
+
+html[data-app-ready]::before,
+html[data-app-ready]::after,
+html[data-app-ready] body::before,
+html[data-app-ready] body::after {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-}
-
-.app-splash__icon {
-    width: 26vmin;
-    height: 26vmin;
-    border-radius: 22.37%;
-    box-shadow: 0 6px 24px rgb(0 0 0 / 0.18);
-}
-
-/* Only shown if loading takes a while, so fast starts stay clean. */
-.app-splash__spinner {
-    position: absolute;
-    bottom: calc(15vh + var(--safe-bottom));
-    opacity: 0;
-    animation: splash-spinner-in 400ms ease 900ms forwards;
+    animation: none;
 }
 
 @keyframes splash-spinner-in {
     to {
         opacity: 1;
+    }
+}
+
+@keyframes splash-spin {
+    to {
+        rotate: 360deg;
     }
 }

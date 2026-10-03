@@ -8,6 +8,7 @@ const DEVICE_ID_KEY = "pwaDeviceId";
 const SIM_SLOT_KEY = "simSlotIndex";
 const APPEARANCE_KEY = "appearance";
 const GLASS_TINT_KEY = "glassTint";
+const SESSION_KEY = "session";
 
 /** Liquid Glass transparency: 0 = Ultra Clear, 1 = Fully Tinted. */
 export const DEFAULT_GLASS_TINT = 0.45;
@@ -94,4 +95,39 @@ export function loadGlassTint(): number {
 
 export function saveGlassTint(value: number) {
     write(GLASS_TINT_KEY, String(Math.round(value * 100) / 100));
+}
+
+/** Last verified session, so the app opens instantly and works offline. */
+export type StoredSession = {
+    pairToken: string;
+    pairingId: string;
+    gatewayDeviceId: string;
+    gatewayPubSpkiB64: string;
+    demo: boolean;
+};
+
+export function loadSession(): StoredSession | null {
+    try {
+        const raw = read(SESSION_KEY);
+        if (!raw) return null;
+        const s = JSON.parse(raw) as Partial<StoredSession>;
+        if (!s.pairToken || !s.pairingId || !s.gatewayDeviceId) return null;
+        return {
+            pairToken: s.pairToken,
+            pairingId: s.pairingId,
+            gatewayDeviceId: s.gatewayDeviceId,
+            gatewayPubSpkiB64: s.gatewayPubSpkiB64 ?? "AA==",
+            demo: Boolean(s.demo),
+        };
+    } catch {
+        return null;
+    }
+}
+
+export function saveSession(s: StoredSession) {
+    write(SESSION_KEY, JSON.stringify(s));
+}
+
+export function clearSession() {
+    remove(SESSION_KEY);
 }

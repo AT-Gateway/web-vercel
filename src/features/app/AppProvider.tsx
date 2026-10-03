@@ -22,6 +22,7 @@ import {
     markThreadRead,
     markThreadUnread,
     type Message,
+    isAuthError,
     pairMe,
     revokeDevice,
     sendSms,
@@ -31,7 +32,10 @@ import {
 import { threadIdForPeer } from "@/lib/phone";
 import {
     clearPairToken,
+    clearSession,
     getOrCreateDeviceId,
+    loadSession,
+    saveSession,
     loadPairToken,
     loadSimSlot,
     savePairToken,
@@ -47,7 +51,8 @@ export type Session = {
     demo: boolean;
 };
 
-type SessionStatus = "loading" | "signedOut" | "ready";
+/** "offline": a token exists but the server couldn't verify it and nothing is cached. */
+type SessionStatus = "loading" | "signedOut" | "ready" | "offline";
 
 export type OpenThreadInput = { threadId?: string; peer: string; name?: string | null };
 
@@ -56,6 +61,7 @@ export type AppState = {
     status: SessionStatus;
     signIn: (s: Session) => void;
     signOut: () => void;
+    retryConnect: () => void;
 
     conversations: Conversation[];
     conversationsLoaded: boolean;
@@ -147,6 +153,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const threadAbort = useRef<AbortController | null>(null);
 
     // ---------- session ----------
+    const [connectAttempt, setConnectAttempt] = useState(0);
+    const retryConnect = useCallback(() => {
+        setStatus("loading");
+        setConnectAttempt((n) => n + 1);
+    }, []);
+
     useEffect(() => {
         setSimSlotState(loadSimSlot());
         const token = loadPairToken();
@@ -154,24 +166,59 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             setStatus("signedOut");
             return;
         }
+
+        // Open instantly from the last verified session; verify in the background.
+        const cached = loadSession();
+        const hasCache = cached?.pairToken === token;
+        if (hasCache && cached) {
+            setSession((prev) => prev ?? cached);
+            setStatus("ready");
+        }
+
+        let cancelled = false;
         pairMe(token)
             .then((me) => {
-                setSession({
+                if (cancelled) return;
+                const fresh: Session = {
                     pairToken: token,
                     pairingId: me.pairingId,
                     gatewayDeviceId: me.gatewayDeviceId,
                     gatewayPubSpkiB64: me.gatewayPubSpkiB64,
                     demo: Boolean(me.demo) || token.startsWith("demo:"),
-                });
+                };
+                saveSession(fresh);
+                // Keep the same object when nothing changed so data effects don't restart.
+                setSession((prev) =>
+                    prev &&
+                    prev.pairingId === fresh.pairingId &&
+                    prev.gatewayDeviceId === fresh.gatewayDeviceId &&
+                    prev.demo === fresh.demo
+                        ? prev
+                        : fresh
+                );
                 setStatus("ready");
             })
-            .catch(() => {
-                setStatus("signedOut");
+            .catch((e) => {
+                if (cancelled) return;
+                if (isAuthError(e)) {
+                    // The server no longer accepts this device.
+                    clearPairToken();
+                    clearSession();
+                    setSession(null);
+                    setStatus("signedOut");
+                } else if (!hasCache) {
+                    setStatus("offline");
+                }
+                // With a cached session, a network error just means we're offline.
             });
-    }, []);
+        return () => {
+            cancelled = true;
+        };
+    }, [connectAttempt]);
 
     const signIn = useCallback((s: Session) => {
         savePairToken(s.pairToken);
+        saveSession(s);
         setSession(s);
         setStatus("ready");
     }, []);
@@ -181,6 +228,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         // Best effort: revoke this browser's token on the server too.
         if (token) revokeDevice(token, getOrCreateDeviceId()).catch(() => {});
         clearPairToken();
+        clearSession();
         setSession(null);
         setConversations([]);
         setConversationsLoaded(false);
@@ -210,7 +258,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             setConversationsLoaded(true);
         } catch (e) {
             // A revoked token signs the device out instead of failing quietly forever.
-            if (/pair token/i.test(errorText(e) ?? "")) {
+            if (isAuthError(e)) {
                 toast({
                     title: "Signed out",
                     body: "This device's access was revoked.",
@@ -664,6 +712,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         status,
         signIn,
         signOut,
+        retryConnect,
         conversations,
         conversationsLoaded,
         refreshConversations,

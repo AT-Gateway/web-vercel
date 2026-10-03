@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import { APPEARANCE_BOOT_SCRIPT } from "@/hooks/useAppearance";
-import { Spinner } from "@/components/ios/Spinner";
 import splashScreens from "@/generated/splash-screens.json";
 
 export const metadata: Metadata = {
@@ -47,18 +46,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <meta name="mobile-web-app-capable" content="yes" />
             </head>
             <body>
-                {/*
-                 * Launch splash, sent with the HTML so it paints immediately (and from the
-                 * service-worker cache when offline). It matches the iOS launch images and
-                 * fades out once the app has loaded its session (see AppShell).
-                 */}
-                <div id="app-splash" className="app-splash" aria-hidden="true">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src="/icon.svg" alt="" className="app-splash__icon" />
-                    <div className="app-splash__spinner">
-                        <Spinner size={22} />
-                    </div>
-                </div>
                 <ServiceWorkerRegister />
                 {children}
             </body>
