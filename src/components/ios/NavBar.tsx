@@ -44,15 +44,15 @@ export function NavBar({
                     scrolled ? "opacity-100" : "opacity-0"
                 )}
             />
-            {/*{edge ? (*/}
-            {/*    <div*/}
-            {/*        aria-hidden*/}
-            {/*        className={cn(*/}
-            {/*            "edge-top absolute inset-0 transition-opacity duration-300",*/}
-            {/*            scrolled && "opacity-0"*/}
-            {/*        )}*/}
-            {/*    />*/}
-            {/*) : null}*/}
+            {edge ? (
+                <div
+                    aria-hidden
+                    className={cn(
+                        "edge-top absolute inset-0 transition-opacity duration-300",
+                        scrolled && "opacity-0"
+                    )}
+                />
+            ) : null}
             <div className="relative flex min-h-[60px] items-center gap-2 px-4 py-2">
                 <div className="pointer-events-auto flex min-w-11 flex-1 items-center justify-start gap-2">
                     {leading}
