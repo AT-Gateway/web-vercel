@@ -13,3 +13,17 @@ export function threadIdForPeer(peer: string): string {
     const tail = digits.slice(-8);
     return tail || digits || raw;
 }
+
+/** True when the input is plausibly a dialable number (or a short code). */
+export function looksLikePhone(input: string): boolean {
+    const v = input.trim();
+    if (!/^\+?[\d\s()\-.]+$/.test(v)) return false;
+    return v.replace(/\D+/g, "").length >= 3;
+}
+
+/** Strips formatting characters but keeps a leading "+". */
+export function cleanPhone(input: string): string {
+    const v = input.trim();
+    const plus = v.startsWith("+") ? "+" : "";
+    return plus + v.replace(/\D+/g, "");
+}

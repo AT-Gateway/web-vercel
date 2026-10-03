@@ -52,17 +52,25 @@ export type Message = {
 
 export type ListMessagesRes = ApiOk<{ messages: Message[] }>;
 
+export type Contact = {
+    displayName: string;
+    rawNumber: string | null;
+    norm: string;
+    source?: "android" | "web";
+    nameLocked?: boolean;
+};
+
+export type Device = {
+    deviceId: string;
+    deviceType: string;
+    deviceLabel: string | null;
+    createdAt: number;
+    lastSeenAt: number | null;
+};
+
 export type SendSmsRes = ApiOk<{ id: string }>;
 
-export type ListContactsRes = ApiOk<{
-    contacts: Array<{
-        displayName: string;
-        rawNumber: string | null;
-        norm: string;
-        source?: "android" | "web";
-        nameLocked?: boolean;
-    }>;
-}>;
+export type ListContactsRes = ApiOk<{ contacts: Contact[] }>;
 
 export type BlockedChat = {
     threadId: string;
@@ -78,7 +86,7 @@ export type TelegramStatusRes = ApiOk<{
     configured: boolean;
     enabled: boolean;
     featureEnabled: boolean;
-    mode: 'webhook' | 'polling';
+    mode: "webhook" | "polling";
     webhookConfigured: boolean;
     botUsername: string | null;
     alertsEnabled: boolean;
@@ -118,10 +126,20 @@ async function apiFetch<T>(
         headers["Content-Type"] = "application/json";
     }
 
-    const res = await fetch(url(path), {
-        ...opts,
-        headers,
-    });
+    let res: Response;
+    try {
+        res = await fetch(url(path), {
+            ...opts,
+            headers,
+        });
+    } catch (err) {
+        if ((err as Error)?.name === "AbortError") throw err;
+        throw new Error(
+            typeof navigator !== "undefined" && navigator.onLine === false
+                ? "You're offline."
+                : "Can't reach the server."
+        );
+    }
 
     const text = await res.text();
     let data: any = null;
@@ -177,7 +195,9 @@ export async function createInvite(
     return apiFetch("/api/pair/invite", { method: "POST", pairToken });
 }
 
-export async function listDevices(pairToken: string): Promise<ApiOk<{ devices: any[] }>> {
+export async function listDevices(
+    pairToken: string
+): Promise<ApiOk<{ devices: Device[] }>> {
     return apiFetch("/api/pair/devices", { pairToken });
 }
 
@@ -213,6 +233,15 @@ export async function listMessages(
     );
 }
 
+export async function searchMessages(
+    pairToken: string,
+    query: string,
+    limit = 40
+): Promise<ListMessagesRes> {
+    const qs = new URLSearchParams({ q: query, limit: String(limit) });
+    return apiFetch(`/api/sms/search?${qs.toString()}`, { pairToken });
+}
+
 export async function markThreadRead(
     pairToken: string,
     threadId: string
@@ -223,9 +252,17 @@ export async function markThreadRead(
     });
 }
 
-export async function listBlockedChats(
-    pairToken: string
-): Promise<ListBlockedChatsRes> {
+export async function markThreadUnread(
+    pairToken: string,
+    threadId: string
+): Promise<ApiOk<{ marked: number }>> {
+    return apiFetch(`/api/sms/threads/${encodeURIComponent(threadId)}/unread`, {
+        method: "POST",
+        pairToken,
+    });
+}
+
+export async function listBlockedChats(pairToken: string): Promise<ListBlockedChatsRes> {
     return apiFetch("/api/sms/blocked-chats", { pairToken });
 }
 
@@ -286,7 +323,7 @@ export async function listContacts(
 export async function upsertContact(
     pairToken: string,
     params: { displayName: string; number: string }
-): Promise<ApiOk<{ contact: ListContactsRes["contacts"][number] }>> {
+): Promise<ApiOk<{ contact: Contact }>> {
     return apiFetch("/api/contacts/upsert", {
         method: "POST",
         pairToken,
@@ -307,15 +344,15 @@ export async function pushSubscribe(
 }
 
 export async function telegramStatus(pairToken: string): Promise<TelegramStatusRes> {
-    return apiFetch('/api/telegram/status', { pairToken });
+    return apiFetch("/api/telegram/status", { pairToken });
 }
 
 export async function telegramSetAlerts(
     pairToken: string,
     alertsEnabled: boolean
 ): Promise<ApiOk<{ alertsEnabled: boolean }>> {
-    return apiFetch('/api/telegram/settings', {
-        method: 'POST',
+    return apiFetch("/api/telegram/settings", {
+        method: "POST",
         pairToken,
         body: JSON.stringify({ alertsEnabled }),
     });
@@ -324,17 +361,19 @@ export async function telegramSetAlerts(
 export async function telegramCreateLinkCode(
     pairToken: string
 ): Promise<ApiOk<{ code: string; expiresAt: number; botDeepLink: string | null }>> {
-    return apiFetch('/api/telegram/link-code', { method: 'POST', pairToken });
+    return apiFetch("/api/telegram/link-code", { method: "POST", pairToken });
 }
 
 export async function telegramSetupWebhook(
     pairToken: string
 ): Promise<ApiOk<{ webhookUrl: string; botUsername: string | null }>> {
-    return apiFetch('/api/telegram/setup-webhook', { method: 'POST', pairToken });
+    return apiFetch("/api/telegram/setup-webhook", { method: "POST", pairToken });
 }
 
-export async function telegramTest(pairToken: string): Promise<ApiOk<{ results: any[] }>> {
-    return apiFetch('/api/telegram/test', { method: 'POST', pairToken });
+export async function telegramTest(
+    pairToken: string
+): Promise<ApiOk<{ results: Array<{ ok: boolean }> }>> {
+    return apiFetch("/api/telegram/test", { method: "POST", pairToken });
 }
 
 export function getApiBaseUrl(): string {

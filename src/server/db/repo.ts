@@ -960,6 +960,12 @@ export function createRepo(pool: Pool) {
           last_body_is_encrypted
         FROM conv_base
         ORDER BY thread_id, last_message_ts_ms DESC
+      ),
+      unread AS (
+        SELECT COALESCE(m.peer_tail, m.peer_norm, m.peer) AS thread_id, COUNT(*)::int AS unread
+        FROM messages m
+        WHERE m.pairing_id = $1 AND m.direction = 'in' AND m.read_at_ms IS NULL
+        GROUP BY 1
       )
       SELECT
         l.thread_id,
@@ -969,12 +975,14 @@ export function createRepo(pool: Pool) {
         l.last_body_is_encrypted,
         p.gateway_device_id,
         COALESCE(ct_exact.display_name, ct_tail.display_name) AS peer_name,
-        (b.thread_id IS NOT NULL) AS blocked
+        (b.thread_id IS NOT NULL) AS blocked,
+        COALESCE(u.unread, 0) AS unread_count
       FROM latest l
       JOIN pairings p ON p.id = l.pairing_id
       LEFT JOIN contacts ct_exact ON ct_exact.gateway_device_id = p.gateway_device_id AND ct_exact.norm = l.peer_norm
       LEFT JOIN contacts ct_tail ON ct_tail.gateway_device_id = p.gateway_device_id AND ct_tail.tail = l.peer_tail
       LEFT JOIN blocked_chats b ON b.pairing_id = l.pairing_id AND b.thread_id = l.thread_id
+      LEFT JOIN unread u ON u.thread_id = l.thread_id
       ORDER BY l.last_message_ts_ms DESC
       LIMIT $2
       `,
@@ -988,7 +996,7 @@ export function createRepo(pool: Pool) {
       lastTs: Number(row.last_message_ts_ms),
       lastPreview: String(row.last_message_preview ?? ''),
       lastBodyIsEncrypted: row.last_body_is_encrypted ? 1 : 0,
-      unreadCount: 0,
+      unreadCount: Number(row.unread_count ?? 0),
       blocked: row.blocked === true,
     }));
   }
@@ -1029,12 +1037,40 @@ export function createRepo(pool: Pool) {
     };
   }
 
-  async function markThreadRead(pairingId: string, threadId: string): Promise<{ ok: true }> {
-    // Real database unread counts are not persisted yet, so this is a no-op for production data.
-    // Demo mode overrides this method to clear seeded unread badges when a chat is opened.
-    void pairingId;
-    void threadId;
-    return { ok: true };
+  /** Marks every unread inbound message in the thread as read (shared by all paired devices). */
+  async function markThreadRead(pairingId: string, threadId: string): Promise<{ ok: true; marked: number }> {
+    const r = await pool.query(
+      `
+      UPDATE messages
+        SET read_at_ms = $3
+      WHERE pairing_id = $1
+        AND direction = 'in'
+        AND read_at_ms IS NULL
+        AND (peer = $2 OR peer_norm = $2 OR peer_tail = $2)
+      `,
+      [pairingId, threadId, Date.now()]
+    );
+    return { ok: true, marked: r.rowCount ?? 0 };
+  }
+
+  /** "Mark as Unread": flags the latest inbound message in the thread unread again. */
+  async function markThreadUnread(pairingId: string, threadId: string): Promise<{ ok: true; marked: number }> {
+    const r = await pool.query(
+      `
+      UPDATE messages
+        SET read_at_ms = NULL
+      WHERE id = (
+        SELECT id FROM messages
+        WHERE pairing_id = $1
+          AND direction = 'in'
+          AND (peer = $2 OR peer_norm = $2 OR peer_tail = $2)
+        ORDER BY ts_ms DESC
+        LIMIT 1
+      )
+      `,
+      [pairingId, threadId]
+    );
+    return { ok: true, marked: r.rowCount ?? 0 };
   }
 
   // ---------------- chat management ----------------
@@ -1362,6 +1398,59 @@ export function createRepo(pool: Pool) {
     }));
   }
 
+  async function searchMessages(pairingId: string, query: string, limit: number): Promise<MessageRow[]> {
+    const q = query.trim();
+    if (!q) return [];
+
+    // Escape LIKE wildcards so user input is matched literally.
+    const pattern = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+
+    const r = await pool.query(
+      `
+      SELECT
+        m.id,
+        COALESCE(m.peer_tail, m.peer_norm, m.peer) AS thread_id,
+        m.peer,
+        m.direction,
+        m.body,
+        m.body_is_encrypted,
+        m.ts_ms,
+        m.status,
+        m.delivered_at_ms,
+        m.sim_slot_index,
+        m.subscription_id,
+        m.created_by,
+        COALESCE(ct_exact.display_name, ct_tail.display_name) AS peer_name
+      FROM messages m
+      JOIN pairings p ON p.id = m.pairing_id
+      LEFT JOIN contacts ct_exact ON ct_exact.gateway_device_id = p.gateway_device_id AND ct_exact.norm = m.peer_norm
+      LEFT JOIN contacts ct_tail ON ct_tail.gateway_device_id = p.gateway_device_id AND ct_tail.tail = m.peer_tail
+      WHERE m.pairing_id = $1
+        AND m.body_is_encrypted = FALSE
+        AND m.body ILIKE $2
+      ORDER BY m.ts_ms DESC
+      LIMIT $3
+      `,
+      [pairingId, pattern, limit]
+    );
+
+    return r.rows.map((row: any) => ({
+      id: String(row.id),
+      threadId: String(row.thread_id),
+      peer: String(row.peer),
+      peerName: row.peer_name ? String(row.peer_name) : null,
+      direction: row.direction as MessageDirection,
+      body: String(row.body),
+      bodyIsEncrypted: row.body_is_encrypted ? 1 : 0,
+      ts: Number(row.ts_ms),
+      status: row.status as MessageStatus,
+      deliveredAt: row.delivered_at_ms ? Number(row.delivered_at_ms) : null,
+      simSlotIndex: row.sim_slot_index !== null && row.sim_slot_index !== undefined ? Number(row.sim_slot_index) : null,
+      subscriptionId: row.subscription_id !== null && row.subscription_id !== undefined ? Number(row.subscription_id) : null,
+      createdBy: row.created_by as MessageCreatedBy,
+    }));
+  }
+
   async function getMessageMeta(id: string): Promise<{ pairingId: string | null; peer: string; gatewayDeviceId: string } | null> {
     const r = await pool.query(
       'SELECT pairing_id, peer, gateway_device_id FROM messages WHERE id = $1',
@@ -1577,6 +1666,7 @@ export function createRepo(pool: Pool) {
     listConversations,
     resolvePeerByThreadId,
     markThreadRead,
+    markThreadUnread,
     listBlockedChats,
     isThreadBlocked,
     blockThread,
@@ -1587,6 +1677,7 @@ export function createRepo(pool: Pool) {
     insertMessage,
     tryInsertMessage,
     listMessages,
+    searchMessages,
     getMessageMeta,
 
     // telegram

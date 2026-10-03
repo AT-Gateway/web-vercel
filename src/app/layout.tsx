@@ -1,40 +1,46 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
+import { APPEARANCE_BOOT_SCRIPT } from "@/hooks/useAppearance";
 
 export const metadata: Metadata = {
-    title: "SMS Gateway",
-    description: "SMS gateway PWA",
+    title: "Messages",
+    description: "Read and send SMS through your Android gateway.",
     applicationName: "SMS Gateway",
+    manifest: "/manifest.webmanifest",
+    icons: {
+        icon: [
+            { url: "/favicon.svg", type: "image/svg+xml" },
+            { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
+        ],
+        apple: { url: "/apple-touch-icon.png", sizes: "180x180" },
+    },
     appleWebApp: {
         capable: true,
         statusBarStyle: "default",
-        title: "SMS Gateway",
+        title: "Messages",
     },
+    formatDetection: { telephone: false, email: false, address: false },
 };
 
 export const viewport: Viewport = {
-    themeColor: "#0b0f14",
     width: "device-width",
     initialScale: 1,
+    viewportFit: "cover",
+    interactiveWidget: "resizes-content",
+    themeColor: [
+        { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+        { media: "(prefers-color-scheme: dark)", color: "#000000" },
+    ],
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
     return (
-        <html lang="en">
+        <html lang="en" dir="ltr" suppressHydrationWarning>
             <head>
-                <link rel="manifest" href="/manifest.webmanifest" />
-                <link rel="icon" href="/atg-icon.ico" />
+                {/* Apply the saved appearance before first paint to avoid a flash. */}
+                <script dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOT_SCRIPT }} />
                 <meta name="mobile-web-app-capable" content="yes" />
-                <meta
-                    key="viewport"
-                    name="viewport"
-                    content="width=device-width, initial-scale=1, minimum-scale=1.0, maximum-scale=5.0, viewport-fit=cover, user-scalable=0, shrink-to-fit=no"
-                />
-                <title> SMS Gateway </title>
-                <meta name="apple-mobile-web-app-capable" content="yes" />
-                <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-                <meta name="apple-mobile-web-app-title" content="GoToSafar" />
             </head>
             <body>
                 <ServiceWorkerRegister />

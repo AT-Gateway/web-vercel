@@ -28,8 +28,10 @@ export async function registerAndroidRoutes(
     const enc = body.enc;
 
     const ts = typeof body.ts === 'number' ? Number(body.ts) : Date.now();
-    const simSlotIndex = body.simSlotIndex === 0 || body.simSlotIndex === 1 ? Number(body.simSlotIndex) : null;
-    const subscriptionId = typeof body.subscriptionId === 'number' ? Number(body.subscriptionId) : null;
+    // The receiving SIM reported by the phone is unreliable, so it is ignored:
+    // inbound messages carry no SIM, and replies always use an explicitly chosen SIM.
+    const simSlotIndex = null;
+    const subscriptionId = null;
 
     if (!gatewayDeviceId || !from) {
       return reply.code(400).send({ ok: false, error: 'Missing gatewayDeviceId or from' });
@@ -103,6 +105,7 @@ export async function registerAndroidRoutes(
               await sendPush(s.subscription, {
                 type: 'inbound_sms',
                 id,
+                threadId: tail || norm || from,
                 peer: from,
                 peerName,
                 body: bodyIsEncrypted ? '' : bodyText,
@@ -128,23 +131,14 @@ export async function registerAndroidRoutes(
             const peerName = await repo.lookupContactName(gatewayDeviceId, from);
             const title = peerName ? `${peerName} (${from})` : from;
             const text = bodyIsEncrypted ? '🔒 Encrypted message' : bodyText;
-            const simLabel = simSlotIndex === 0 ? 'SIM1' : simSlotIndex === 1 ? 'SIM2' : 'AUTO';
-            const msg = [
-              '📩 New SMS',
-              '',
-              `From: ${title}`,
-              `Gateway: ${gatewayDeviceId}`,
-              `SIM: ${simLabel}`,
-              '',
-              text,
-            ].join('\n');
+            // No SIM is shown or inferred for inbound SMS; the reply SIM is picked explicitly.
+            const msg = ['📩 New SMS', '', `From: ${title}`, `Gateway: ${gatewayDeviceId}`, '', text].join('\n');
 
             const replyMarkup = {
               inline_keyboard: [
                 [
-                  { text: '↩️ Reply', callback_data: `r:${id}:keep` },
-                  { text: 'SIM1', callback_data: `r:${id}:0` },
-                  { text: 'SIM2', callback_data: `r:${id}:1` },
+                  { text: '↩️ Reply · SIM 1', callback_data: `r:${id}:0` },
+                  { text: '↩️ Reply · SIM 2', callback_data: `r:${id}:1` },
                 ],
                 [
                   { text: '🕘 Recent chats', callback_data: 'tg:recent' },

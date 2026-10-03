@@ -658,10 +658,23 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
 
     async markThreadRead(pairingId: string, threadId: string) {
       if (isDemoPairing(cfg, pairingId)) {
+        const before = unreadCountForThread(threadId);
         markDemoThreadRead(threadId);
-        return { ok: true as const };
+        return { ok: true as const, marked: before };
       }
       return useReal('markThreadRead', pairingId, threadId);
+    },
+
+    async markThreadUnread(pairingId: string, threadId: string) {
+      if (isDemoPairing(cfg, pairingId)) {
+        const latestIn = state.messages
+          .filter((m) => m.direction === 'in' && messageMatchesThread(m, threadId))
+          .sort((a, b) => b.ts - a.ts)[0];
+        if (!latestIn) return { ok: true as const, marked: 0 };
+        state.readAtByThread.set(latestIn.threadId || threadIdFor(latestIn.peer), latestIn.ts - 1);
+        return { ok: true as const, marked: 1 };
+      }
+      return useReal('markThreadUnread', pairingId, threadId);
     },
 
     async listBlockedChats(pairingId: string): Promise<BlockedChatRow[]> {
@@ -786,6 +799,19 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
           .map((m) => ({ ...m, peerName: contactName(m.peer) ?? m.peerName }));
       }
       return useReal('listMessages', pairingId, threadIdOrPeer, limit);
+    },
+
+    async searchMessages(pairingId: string, query: string, limit: number): Promise<MessageRow[]> {
+      if (isDemoPairing(cfg, pairingId)) {
+        const q = query.trim().toLowerCase();
+        if (!q) return [];
+        return state.messages
+          .filter((m) => !m.bodyIsEncrypted && m.body.toLowerCase().includes(q))
+          .sort((a, b) => b.ts - a.ts)
+          .slice(0, limit)
+          .map((m) => ({ ...m, peerName: contactName(m.peer) ?? m.peerName }));
+      }
+      return useReal('searchMessages', pairingId, query, limit);
     },
 
     async getMessageMeta(id: string) {

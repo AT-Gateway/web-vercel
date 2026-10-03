@@ -1,59 +1,97 @@
-export const TOKEN_STORAGE_KEYS = ["pairToken", "pair_token"];
+/**
+ * Thin, exception-safe wrappers around localStorage. Private browsing modes and
+ * blocked storage throw on access, so every read/write is guarded.
+ */
 
-export function loadPairToken(): string | null {
-    if (typeof window === "undefined") return null;
-    for (const k of TOKEN_STORAGE_KEYS) {
-        const v = window.localStorage.getItem(k);
-        if (v && v.trim()) return v.trim();
+const PAIR_TOKEN_KEYS = ["pairToken", "PAIR_TOKEN", "pair_token", "pair_token_v1"];
+const DEVICE_ID_KEY = "pwaDeviceId";
+const SIM_SLOT_KEY = "simSlotIndex";
+const APPEARANCE_KEY = "appearance";
+const GLASS_TINT_KEY = "glassTint";
+
+/** Liquid Glass transparency: 0 = Ultra Clear, 1 = Fully Tinted. */
+export const DEFAULT_GLASS_TINT = 0.45;
+
+export type Appearance = "system" | "light" | "dark";
+
+function read(key: string): string | null {
+    try {
+        return window.localStorage.getItem(key);
+    } catch {
+        return null;
     }
-    return null;
+}
+
+function write(key: string, value: string) {
+    try {
+        window.localStorage.setItem(key, value);
+    } catch {
+        // Storage unavailable; the value just won't persist.
+    }
+}
+
+function remove(key: string) {
+    try {
+        window.localStorage.removeItem(key);
+    } catch {
+        // ignore
+    }
+}
+
+export function loadPairToken(): string {
+    if (typeof window === "undefined") return "";
+    for (const key of PAIR_TOKEN_KEYS) {
+        const v = read(key)?.trim();
+        if (v) return v;
+    }
+    return "";
 }
 
 export function savePairToken(token: string) {
-    if (typeof window === "undefined") return;
-    const t = token.trim();
-    for (const k of TOKEN_STORAGE_KEYS) {
-        window.localStorage.setItem(k, t);
-    }
+    // Older builds read different keys; keep the primary ones in sync.
+    write("pairToken", token);
+    write("PAIR_TOKEN", token);
+    write("pair_token", token);
 }
 
 export function clearPairToken() {
-    if (typeof window === "undefined") return;
-    for (const k of TOKEN_STORAGE_KEYS) {
-        window.localStorage.removeItem(k);
-    }
+    for (const key of PAIR_TOKEN_KEYS) remove(key);
 }
 
 export function getOrCreateDeviceId(): string {
-    if (typeof window === "undefined") return "server";
-    const key = "deviceId";
-    const existing = window.localStorage.getItem(key);
-    if (existing && existing.trim()) return existing.trim();
-    const id =
-        "pwa-" + Math.random().toString(36).slice(2, 10) + "-" + Date.now().toString(36);
-    window.localStorage.setItem(key, id);
+    if (typeof window === "undefined") return "pwa";
+    const existing = read(DEVICE_ID_KEY);
+    if (existing) return existing;
+    const id = `pwa-${Math.random().toString(16).slice(2)}-${Date.now()}`;
+    write(DEVICE_ID_KEY, id);
     return id;
 }
 
-export function loadSimSlotIndex(): 0 | 1 {
-    if (typeof window === "undefined") return 0;
-    const v = window.localStorage.getItem("simSlotIndex");
-    return v === "1" ? 1 : 0;
+export function loadSimSlot(): 0 | 1 {
+    return read(SIM_SLOT_KEY) === "1" ? 1 : 0;
 }
 
-export function saveSimSlotIndex(v: 0 | 1) {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("simSlotIndex", String(v));
+export function saveSimSlot(slot: 0 | 1) {
+    write(SIM_SLOT_KEY, String(slot));
 }
 
-export function loadSubscriptionId(): number {
-    if (typeof window === "undefined") return -1;
-    const v = window.localStorage.getItem("subscriptionId");
-    const n = v ? Number(v) : -1;
-    return Number.isFinite(n) ? n : -1;
+export function loadAppearance(): Appearance {
+    const v = read(APPEARANCE_KEY);
+    return v === "light" || v === "dark" ? v : "system";
 }
 
-export function saveSubscriptionId(v: number) {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("subscriptionId", String(v));
+export function saveAppearance(value: Appearance) {
+    if (value === "system") remove(APPEARANCE_KEY);
+    else write(APPEARANCE_KEY, value);
+}
+
+export function loadGlassTint(): number {
+    const v = Number(read(GLASS_TINT_KEY));
+    return read(GLASS_TINT_KEY) !== null && Number.isFinite(v)
+        ? Math.min(1, Math.max(0, v))
+        : DEFAULT_GLASS_TINT;
+}
+
+export function saveGlassTint(value: number) {
+    write(GLASS_TINT_KEY, String(Math.round(value * 100) / 100));
 }

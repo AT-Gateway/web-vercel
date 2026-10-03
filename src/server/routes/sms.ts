@@ -23,11 +23,34 @@ export async function registerSmsRoutes(app: FastifyInstance, repo: ReturnType<t
     return { ok: true, threadId, messages };
   });
 
-  app.post('/api/sms/threads/:threadId/read', async (req) => {
+  app.get('/api/sms/search', async (req) => {
+    const p = req.pairAuth!;
+    const q = (req.query ?? {}) as any;
+    const query = String(q.q ?? q.query ?? '').trim().slice(0, 200);
+    const limit = Math.min(Math.max(Number(q.limit ?? 40) || 40, 1), 200);
+    if (!query) return { ok: true, messages: [] };
+
+    const messages = await repo.searchMessages(p.pairingId, query, limit);
+    return { ok: true, messages };
+  });
+
+  app.post('/api/sms/threads/:threadId/read', async (req, reply) => {
     const p = req.pairAuth!;
     const threadId = String((req.params as any)?.threadId ?? '').trim();
-    if (!threadId) return { ok: false, error: 'Missing threadId' };
-    return repo.markThreadRead(p.pairingId, threadId);
+    if (!threadId) return reply.code(400).send({ ok: false, error: 'Missing threadId' });
+    const res = await repo.markThreadRead(p.pairingId, threadId);
+    // Read state is shared, so other paired devices update their badges.
+    if (res.marked > 0) hub.emit(p.pairingId, 'chats', { threadId, read: true });
+    return res;
+  });
+
+  app.post('/api/sms/threads/:threadId/unread', async (req, reply) => {
+    const p = req.pairAuth!;
+    const threadId = String((req.params as any)?.threadId ?? '').trim();
+    if (!threadId) return reply.code(400).send({ ok: false, error: 'Missing threadId' });
+    const res = await repo.markThreadUnread(p.pairingId, threadId);
+    if (res.marked > 0) hub.emit(p.pairingId, 'chats', { threadId, read: false });
+    return res;
   });
 
   app.get('/api/sms/blocked-chats', async (req) => {
@@ -80,7 +103,8 @@ export async function registerSmsRoutes(app: FastifyInstance, repo: ReturnType<t
 
     const to = String(body.to ?? '').trim();
     const text = String(body.body ?? '').trim();
-    const simSlotIndex = body.simSlotIndex === 0 || body.simSlotIndex === 1 ? Number(body.simSlotIndex) : null;
+    // No automatic SIM selection: the client picks SIM 1 or SIM 2, defaulting to SIM 1.
+    const simSlotIndex = body.simSlotIndex === 1 ? 1 : 0;
     const subscriptionId = typeof body.subscriptionId === 'number' ? Number(body.subscriptionId) : null;
 
     if (!to || !text) return reply.code(400).send({ ok: false, error: 'Missing to or body' });
@@ -105,6 +129,9 @@ export async function registerSmsRoutes(app: FastifyInstance, repo: ReturnType<t
       simSlotIndex,
       subscriptionId,
     });
+
+    // Replying implies the conversation has been read.
+    await repo.markThreadRead(p.pairingId, tail || norm || to);
 
     hub.emit(p.pairingId, 'message', {
       id,

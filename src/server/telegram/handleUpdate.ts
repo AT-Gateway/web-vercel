@@ -9,10 +9,27 @@ import {
   telegramSend,
 } from '../services/telegram';
 
-function fmtSim(simSlotIndex: number | null) {
-  if (simSlotIndex === 0) return 'SIM1';
-  if (simSlotIndex === 1) return 'SIM2';
-  return 'AUTO';
+/**
+ * The SIM used for sending. There is no automatic selection: chats that never
+ * picked one send from SIM 1.
+ */
+function sendingSim(simSlotIndex: number | null | undefined): 0 | 1 {
+  return simSlotIndex === 1 ? 1 : 0;
+}
+
+function fmtSim(simSlotIndex: number | null | undefined) {
+  return sendingSim(simSlotIndex) === 1 ? 'SIM 2' : 'SIM 1';
+}
+
+function simKeyboard(current: 0 | 1) {
+  return {
+    inline_keyboard: [
+      [
+        { text: `${current === 0 ? '✅ ' : ''}SIM 1`, callback_data: 'tg:sim:0' },
+        { text: `${current === 1 ? '✅ ' : ''}SIM 2`, callback_data: 'tg:sim:1' },
+      ],
+    ],
+  };
 }
 
 function looksLikePhone(q: string) {
@@ -87,7 +104,7 @@ async function sendStatus(
       `Linked chats: ${linked.length} (${enabledChats} active)`,
       `Gateway: ${gatewayDeviceId}`,
       `Pairing: ${pairing?.id ?? '-'}`,
-      `Default SIM: ${fmtSim(session.defaultSimSlotIndex)}`,
+      `Sending SIM: ${fmtSim(session.defaultSimSlotIndex)}`,
       `Active peer: ${session.lastPeer ?? '-'}`,
     ].join('\n'),
     { replyMarkup: mainKeyboard(primary?.enabled ?? true) }
@@ -191,6 +208,15 @@ export async function handleTelegramUpdate(
       return;
     }
 
+    if (data === 'tg:sim:0' || data === 'tg:sim:1') {
+      const slot = data.endsWith(':1') ? 1 : 0;
+      session.defaultSimSlotIndex = slot;
+      await repo.setTelegramSession(session);
+      await telegramAnswerCallback(botToken, cbId, `Sending from ${fmtSim(slot)}`).catch(() => {});
+      await send(`✅ New SMS will be sent from ${fmtSim(slot)}.`, { replyMarkup: simKeyboard(slot) });
+      return;
+    }
+
     if (data === 'tg:recent') {
       await telegramAnswerCallback(botToken, cbId).catch(() => {});
       if (await requireLinkedOrLegacy()) await sendRecent(botToken, chatId, repo, gatewayDeviceId, primary, 10);
@@ -244,7 +270,9 @@ export async function handleTelegramUpdate(
       session.gatewayDeviceId = meta.gatewayDeviceId;
       session.lastPeer = meta.peer;
       session.lastThreadId = threadId;
+      // "keep" comes from alerts sent before explicit SIM buttons; it uses the chat's sending SIM.
       if (sim === '0' || sim === '1') session.defaultSimSlotIndex = Number(sim);
+      session.defaultSimSlotIndex = sendingSim(session.defaultSimSlotIndex);
       await repo.setTelegramSession(session);
 
       const peerName = await repo.lookupContactName(meta.gatewayDeviceId, meta.peer);
@@ -384,7 +412,17 @@ export async function handleTelegramUpdate(
     if (cmd.kind === 'set_sim') {
       session.defaultSimSlotIndex = cmd.simSlotIndex;
       await repo.setTelegramSession(session);
-      await send(`✅ Default SIM set to: ${fmtSim(cmd.simSlotIndex)}`);
+      await send(`✅ New SMS will be sent from ${fmtSim(cmd.simSlotIndex)}.`, {
+        replyMarkup: simKeyboard(cmd.simSlotIndex),
+      });
+      return;
+    }
+
+    if (cmd.kind === 'sim_menu') {
+      const current = sendingSim(session.defaultSimSlotIndex);
+      await send(`📶 Choose the SIM for sending SMS.\n\nCurrent: ${fmtSim(current)}`, {
+        replyMarkup: simKeyboard(current),
+      });
       return;
     }
 
@@ -448,7 +486,7 @@ export async function handleTelegramUpdate(
         return;
       }
 
-      const simSlotIndex = cmd.simSlotIndex ?? session.defaultSimSlotIndex;
+      const simSlotIndex = cmd.simSlotIndex ?? sendingSim(session.defaultSimSlotIndex);
       const { norm, tail } = repo.normalizePhone(toNumber);
 
       const id = randomUUID();
@@ -463,7 +501,7 @@ export async function handleTelegramUpdate(
         bodyIsEncrypted: false,
         ts: Date.now(),
         createdBy: 'telegram',
-        simSlotIndex: simSlotIndex ?? null,
+        simSlotIndex,
         subscriptionId: null,
       });
 
@@ -476,8 +514,11 @@ export async function handleTelegramUpdate(
         status: 'queued',
       });
 
+      // Replying implies the conversation has been read.
+      await repo.markThreadRead(pairingId, tail || norm || toNumber);
+
       const who = toName ? `${toName} (${toNumber})` : toNumber;
-      await send(`✅ Queued SMS\n\nGateway: ${gatewayDeviceId}\nSIM: ${fmtSim(simSlotIndex ?? null)}\nTo: ${who}`);
+      await send(`✅ Queued SMS\n\nGateway: ${gatewayDeviceId}\nSIM: ${fmtSim(simSlotIndex)}\nTo: ${who}`);
       return;
     }
 
@@ -501,7 +542,7 @@ export async function handleTelegramUpdate(
 
       const { norm, tail } = repo.normalizePhone(session.lastPeer);
       const id = randomUUID();
-      const simSlotIndex = session.defaultSimSlotIndex;
+      const simSlotIndex = sendingSim(session.defaultSimSlotIndex);
 
       await repo.enqueueOutboundMessage({
         id,
@@ -514,7 +555,7 @@ export async function handleTelegramUpdate(
         bodyIsEncrypted: false,
         ts: Date.now(),
         createdBy: 'telegram',
-        simSlotIndex: simSlotIndex ?? null,
+        simSlotIndex,
         subscriptionId: null,
       });
 
@@ -526,6 +567,8 @@ export async function handleTelegramUpdate(
         ts: Date.now(),
         status: 'queued',
       });
+
+      await repo.markThreadRead(pairingId, tail || norm || session.lastPeer);
 
       await send(`✅ Queued reply via ${gatewayDeviceId} · ${fmtSim(simSlotIndex)}.`);
       return;

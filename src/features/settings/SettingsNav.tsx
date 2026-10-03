@@ -1,0 +1,76 @@
+"use client";
+
+import React, { createContext, useContext } from "react";
+import { ChevronLeft } from "lucide-react";
+import type { Contact } from "@/lib/api";
+import { SheetHeader } from "@/components/ios/Sheet";
+import { cn } from "@/lib/utils";
+
+export type SettingsPage =
+    | { name: "root" }
+    | { name: "telegram" }
+    | { name: "contacts" }
+    | { name: "contact-edit"; contact: Contact | null }
+    | { name: "blocked" }
+    | { name: "devices" };
+
+export const PAGE_TITLES: Record<SettingsPage["name"], string> = {
+    root: "Settings",
+    telegram: "Telegram",
+    contacts: "Contacts",
+    "contact-edit": "Contact",
+    blocked: "Blocked Contacts",
+    devices: "Devices",
+};
+
+type Nav = {
+    push: (p: SettingsPage) => void;
+    pop: () => void;
+    close: () => void;
+    previousTitle: string;
+};
+
+export const SettingsNavContext = createContext<Nav>({
+    push: () => {},
+    pop: () => {},
+    close: () => {},
+    previousTitle: "Settings",
+});
+
+export function useSettingsNav() {
+    return useContext(SettingsNavContext);
+}
+
+/** Pushed-page header: "‹ Settings" back button with the page title. */
+export function PageHeader({
+    title,
+    trailing,
+}: {
+    title: string;
+    trailing?: React.ReactNode;
+}) {
+    const { pop, previousTitle } = useSettingsNav();
+    return (
+        <SheetHeader
+            title={title}
+            leading={
+                <button
+                    type="button"
+                    onClick={pop}
+                    aria-label={`Back to ${previousTitle}`}
+                    className={cn(
+                        "tap glass text-body -ml-1 flex h-11 min-w-11 items-center justify-center gap-0.5 rounded-full transition-transform duration-200 active:scale-95",
+                        title.length <= 10 ? "pr-3.5 pl-2" : "px-0"
+                    )}
+                >
+                    <ChevronLeft className="size-[22px]" strokeWidth={2.4} />
+                    {/* Like UIKit, drop the back title when the page title needs the room. */}
+                    {title.length <= 10 ? (
+                        <span className="max-w-[110px] truncate">{previousTitle}</span>
+                    ) : null}
+                </button>
+            }
+            trailing={trailing}
+        />
+    );
+}

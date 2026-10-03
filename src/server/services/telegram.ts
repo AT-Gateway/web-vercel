@@ -75,7 +75,7 @@ export async function telegramSetCommands(botToken: string) {
       { command: 'recent', description: 'Show recent SMS chats' },
       { command: 'open', description: 'Set an active SMS chat' },
       { command: 'sms', description: 'Send an SMS' },
-      { command: 'sim', description: 'Choose default SIM' },
+      { command: 'sim', description: 'Choose the SIM for sending' },
       { command: 'gateways', description: 'List Android gateways' },
       { command: 'pause', description: 'Pause Telegram alerts' },
       { command: 'resume', description: 'Resume Telegram alerts' },
@@ -100,10 +100,11 @@ export type TgCmd =
   | { kind: 'unlink' }
   | { kind: 'gateways' }
   | { kind: 'use_gateway'; gatewayDeviceId: string }
-  | { kind: 'set_sim'; simSlotIndex: number | null }
+  | { kind: 'set_sim'; simSlotIndex: 0 | 1 }
+  | { kind: 'sim_menu' }
   | { kind: 'recent'; limit: number }
   | { kind: 'open'; threadId: string }
-  | { kind: 'sms'; numberOrQuery: string; body: string; simSlotIndex: number | null }
+  | { kind: 'sms'; numberOrQuery: string; body: string; simSlotIndex: 0 | 1 | null }
   | { kind: 'reply_text'; body: string };
 
 function cleanCode(raw: string) {
@@ -145,12 +146,12 @@ export function parseTelegramText(raw: string): TgCmd {
     return gatewayDeviceId ? { kind: 'use_gateway', gatewayDeviceId } : { kind: 'help' };
   }
 
+  // There is no automatic SIM selection: the user always picks SIM 1 or SIM 2.
   if (cmd === 'sim') {
     const v = (rest[0] ?? '').trim().toLowerCase();
-    if (!v || v === 'auto' || v === 'default') return { kind: 'set_sim', simSlotIndex: null };
     if (v === '1') return { kind: 'set_sim', simSlotIndex: 0 };
     if (v === '2') return { kind: 'set_sim', simSlotIndex: 1 };
-    return { kind: 'help' };
+    return { kind: 'sim_menu' };
   }
 
   if (cmd === 'recent') {
@@ -198,19 +199,19 @@ export function telegramHelpText(isLinked = true) {
     '✨ SMS Gateway Telegram Bot',
     '',
     'Send an SMS:',
-    '• /sms <number-or-contact> <message>',
-    '• /sms1 <number> <message>   force SIM1',
-    '• /sms2 <number> <message>   force SIM2',
+    '• /sms <number-or-contact> <message>   uses your sending SIM',
+    '• /sms1 <number> <message>   send from SIM 1',
+    '• /sms2 <number> <message>   send from SIM 2',
     '',
     'Reply mode:',
-    '• Tap “Reply” under an inbound SMS, then type your reply',
+    '• Tap “Reply · SIM 1” or “Reply · SIM 2” under an SMS, then type your reply',
     '• /recent [n]      list recent chats',
     '• /open <threadId> set active chat',
     '',
     'Gateway & SIM:',
     '• /gateways        list gateways',
     '• /use <gatewayId> select gateway',
-    '• /sim auto|1|2    default SIM',
+    '• /sim 1|2         SIM used for sending (default: SIM 1)',
     '',
     'Bot controls:',
     '• /status          current bot status',
