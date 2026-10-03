@@ -169,7 +169,6 @@ export function ConversationList({
             }
         >
             <NavBar
-                edgeColor="var(--list-bg)"
                 title={FILTER_TITLES[filter]}
                 showTitle={showTitle}
                 scrolled={scrolled}

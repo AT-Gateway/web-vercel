@@ -1,5 +1,6 @@
 import { pushSubscribe, vapidPublicKey } from "@/lib/api";
 import { getOrCreateDeviceId } from "@/lib/storage";
+import { SW_URL } from "@/lib/sw";
 
 export type PushSupport = { supported: true } | { supported: false; reason: string };
 
@@ -49,7 +50,7 @@ export async function enablePush(pairToken: string): Promise<void> {
         throw new Error("Allow notifications for this site in your browser settings.");
     }
 
-    await navigator.serviceWorker.register("/sw.js");
+    await navigator.serviceWorker.register(SW_URL);
     const reg = await navigator.serviceWorker.ready;
     const keyBytes = urlBase64ToUint8Array(keyRes.key);
 

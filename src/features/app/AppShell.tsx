@@ -5,7 +5,6 @@ import { MessagesSquare, SquarePen } from "lucide-react";
 import { useIsCompact } from "@/hooks/useMediaQuery";
 import { Button } from "@/components/ios/Button";
 import { ContentUnavailable } from "@/components/ios/ContentUnavailable";
-import { Spinner } from "@/components/ios/Spinner";
 import { AppContext, type AppState, useApp } from "@/features/app/AppProvider";
 import { PairingScreen } from "@/features/pairing/PairingScreen";
 import { ConversationList } from "@/features/conversations/ConversationList";
@@ -22,17 +21,12 @@ type Snapshot = Pick<
 const PUSH_MS = 420;
 const EDGE_PX = 28;
 
-function LaunchScreen() {
-    const [showSpinner, setShowSpinner] = useState(false);
-    useEffect(() => {
-        const t = window.setTimeout(() => setShowSpinner(true), 600);
-        return () => window.clearTimeout(t);
-    }, []);
-    return (
-        <div className="bg-bg flex h-dvh items-center justify-center">
-            {showSpinner ? <Spinner size={24} /> : null}
-        </div>
-    );
+/** Fades out the launch splash rendered by the root layout, then removes it. */
+function hideLaunchSplash() {
+    const el = document.getElementById("app-splash");
+    if (!el || el.dataset.hidden !== undefined) return;
+    el.dataset.hidden = "";
+    window.setTimeout(() => el.remove(), 400);
 }
 
 /**
@@ -239,6 +233,10 @@ export function AppShell() {
         if (!activeThreadId) setContactOpen(false);
     }, [activeThreadId]);
 
+    useEffect(() => {
+        if (status !== "loading") hideLaunchSplash();
+    }, [status]);
+
     // Keyboard shortcuts on hardware keyboards: ⌘N new message, ⌘, settings.
     useEffect(() => {
         if (status !== "ready") return;
@@ -256,7 +254,8 @@ export function AppShell() {
         return () => window.removeEventListener("keydown", onKey);
     }, [status]);
 
-    if (status === "loading") return <LaunchScreen />;
+    // The layout's launch splash covers the screen until the session is known.
+    if (status === "loading") return null;
     if (status === "signedOut") return <PairingScreen />;
 
     const props = {

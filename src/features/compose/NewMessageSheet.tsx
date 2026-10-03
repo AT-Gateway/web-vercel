@@ -122,7 +122,7 @@ export function NewMessageSheet({
                         onClick={() => start(asNumber)}
                         className="tap active:bg-fill-4 flex w-full items-center gap-3 px-4 py-2.5 text-left"
                     >
-                        <span className="bg-green flex size-10 items-center justify-center rounded-full text-white">
+                        <span className="bg-tint flex size-10 items-center justify-center rounded-full text-white">
                             <MessageSquarePlus className="size-5" strokeWidth={2.2} />
                         </span>
                         <span className="flex flex-col">

@@ -1,15 +1,16 @@
 "use client";
 
 import { useEffect } from "react";
+import { SW_URL } from "@/lib/sw";
 
 export function ServiceWorkerRegister() {
     useEffect(() => {
         if (typeof window === "undefined") return;
         if (!("serviceWorker" in navigator)) return;
 
-        // Register our service worker (public/sw.js)
+        // public/sw.js: push notifications + (in production) offline app shell.
         navigator.serviceWorker
-            .register("/sw.js")
+            .register(SW_URL)
             .catch((err) => console.warn("Service worker registration failed:", err));
     }, []);
 

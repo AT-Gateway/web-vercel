@@ -70,7 +70,7 @@ export function Composer({ autoFocus }: { autoFocus?: boolean }) {
 
     if (activeBlocked) {
         return (
-            <div className="edge-bottom absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-1 px-4 pt-6 pb-[calc(12px+var(--safe-bottom))]">
+            <div className="edge-bottom absolute inset-x-0 bottom-0 z-20 flex flex-col items-center gap-1 px-4 pt-3 pb-[calc(12px+var(--safe-bottom))]">
                 <p className="text-footnote text-label-2">
                     You blocked {activeName || activePeer}. Their messages aren&apos;t
                     being saved.
@@ -89,7 +89,7 @@ export function Composer({ autoFocus }: { autoFocus?: boolean }) {
     const simLabel = simSlot === 1 ? "SIM 2" : "SIM 1";
 
     return (
-        <div className="edge-bottom absolute inset-x-0 bottom-0 z-20 px-3 pt-5 pb-[calc(8px+var(--safe-bottom))]">
+        <div className="edge-bottom absolute inset-x-0 bottom-0 z-20 px-3 pt-2 pb-[calc(8px+var(--safe-bottom))]">
             <div className="mx-auto flex max-w-3xl items-end gap-2">
                 <Menu
                     label="Send from"
@@ -178,7 +178,7 @@ export function Composer({ autoFocus }: { autoFocus?: boolean }) {
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={send}
                         className={cn(
-                            "tap bg-green absolute right-[5px] bottom-[5px] flex size-[30px] items-center justify-center rounded-full text-white",
+                            "tap bg-tint absolute right-[5px] bottom-[5px] flex size-[30px] items-center justify-center rounded-full text-white",
                             // 44pt hit area around the 30pt visual.
                             "before:absolute before:-inset-[7px] before:content-['']",
                             "ease-spring transition-[transform,opacity] duration-200 active:scale-90",

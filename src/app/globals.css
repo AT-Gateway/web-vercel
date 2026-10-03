@@ -59,10 +59,10 @@
     --sys-gray: light-dark(#8e8e93, #8e8e93);
     --sys-gray-2: light-dark(#aeaeb2, #636366);
 
-    /* Messages — SMS conversations use the green bubble, like iOS Messages. */
+    /* Messages — outgoing bubbles use the app's blue accent. */
     --bubble-in: light-dark(#e9e9eb, #26252a);
     --bubble-in-label: var(--sys-label);
-    --bubble-out: light-dark(#34c759, #30c158);
+    --bubble-out: light-dark(#0a7cff, #0a84ff);
     --bubble-out-label: #ffffff;
     --bubble-failed: light-dark(#e9e9eb, #26252a);
 
@@ -399,31 +399,15 @@
     box-shadow: inset 0 -0.5px 0 var(--sys-separator);
 }
 
-/* Scroll-edge effect: a soft, masked blur where content meets a bar. */
+/* Scroll-edge effect: plain blur where content passes under a bar (no color fade). */
 @utility edge-top {
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
-    background: linear-gradient(
-        to bottom,
-        color-mix(in srgb, var(--edge-color, var(--sys-bg)) 92%, transparent) 0%,
-        color-mix(in srgb, var(--edge-color, var(--sys-bg)) 70%, transparent) 55%,
-        transparent 100%
-    );
-    -webkit-mask-image: linear-gradient(to bottom, black 55%, transparent);
-    mask-image: linear-gradient(to bottom, black 55%, transparent);
 }
 
 @utility edge-bottom {
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
-    background: linear-gradient(
-        to top,
-        color-mix(in srgb, var(--edge-color, var(--sys-bg)) 92%, transparent) 0%,
-        color-mix(in srgb, var(--edge-color, var(--sys-bg)) 70%, transparent) 55%,
-        transparent 100%
-    );
-    -webkit-mask-image: linear-gradient(to top, black 55%, transparent);
-    mask-image: linear-gradient(to top, black 55%, transparent);
 }
 
 @utility hairline-b {
@@ -618,4 +602,45 @@ body:has([data-vaul-drawer][data-state="open"]) {
 .ios-slider:focus-visible::-webkit-slider-thumb {
     outline: 3px solid color-mix(in srgb, var(--sys-blue) 55%, transparent);
     outline-offset: 2px;
+}
+
+/* Launch splash (src/app/layout.tsx). Icon matches the iOS launch images: 26vmin. */
+.app-splash {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--sys-bg);
+    transition:
+        opacity 320ms ease,
+        visibility 320ms ease;
+}
+
+.app-splash[data-hidden] {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.app-splash__icon {
+    width: 26vmin;
+    height: 26vmin;
+    border-radius: 22.37%;
+    box-shadow: 0 6px 24px rgb(0 0 0 / 0.18);
+}
+
+/* Only shown if loading takes a while, so fast starts stay clean. */
+.app-splash__spinner {
+    position: absolute;
+    bottom: calc(15vh + var(--safe-bottom));
+    opacity: 0;
+    animation: splash-spinner-in 400ms ease 900ms forwards;
+}
+
+@keyframes splash-spinner-in {
+    to {
+        opacity: 1;
+    }
 }
