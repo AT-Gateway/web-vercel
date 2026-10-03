@@ -433,6 +433,45 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }
     }, [router]);
 
+    // ---------- notifications & verification codes ----------
+    // The service worker hands notification taps to the running app instead of reloading it.
+    useEffect(() => {
+        if (!("serviceWorker" in navigator)) return;
+        const onMessage = (e: MessageEvent) => {
+            if (e.data?.type === "open-url" && typeof e.data.url === "string") {
+                router.push(e.data.url, { scroll: false });
+            }
+        };
+        navigator.serviceWorker.addEventListener("message", onMessage);
+        return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+    }, [router]);
+
+    // ?code= comes from tapping an OTP notification: copy it, then drop it from the URL.
+    const urlCode = params.get("code");
+    useEffect(() => {
+        if (!urlCode || status !== "ready") return;
+        const code = urlCode;
+        const copy = () =>
+            navigator.clipboard
+                .writeText(code)
+                .then(() => toast({ title: "Code Copied", body: code, tone: "success" }));
+        copy().catch(() => {
+            // Some browsers (Safari) only allow copying from a tap.
+            toast({
+                title: `Tap to copy ${code}`,
+                body: "Verification code from your notification",
+                duration: 8000,
+                onPress: () => {
+                    copy().catch(() => toast({ title: "Couldn't Copy", tone: "error" }));
+                },
+            });
+        });
+        const next = new URLSearchParams(params.toString());
+        next.delete("code");
+        const qs = next.toString();
+        router.replace(qs ? `/?${qs}` : "/", { scroll: false });
+    }, [urlCode, status, params, router, toast]);
+
     // ---------- derived ----------
     const activeConversation = useMemo(
         () => conversations.find((c) => c.threadId === activeThreadId) ?? null,

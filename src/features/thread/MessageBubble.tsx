@@ -1,7 +1,7 @@
 "use client";
 
-import React, { memo } from "react";
-import { CircleAlert, Copy, KeyRound, RotateCw } from "lucide-react";
+import React, { memo, useState } from "react";
+import { Check, CircleAlert, Copy, KeyRound, RotateCw } from "lucide-react";
 import type { Message } from "@/lib/api";
 import { formatDateTime, formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -256,6 +256,7 @@ export const MessageBubble = memo(function MessageBubble({
                         </button>
                     ) : null}
                 </div>
+                {code ? <CodeChip code={code} /> : null}
                 {showStatus && out ? (
                     <div
                         className={cn(
@@ -300,3 +301,34 @@ export const MessageBubble = memo(function MessageBubble({
         </div>
     );
 });
+
+/** One-tap "Copy 482913" button under messages that carry a verification code. */
+function CodeChip({ code }: { code: string }) {
+    const toast = useToast();
+    const [copied, setCopied] = useState(false);
+    return (
+        <button
+            type="button"
+            aria-label={copied ? `Code ${code} copied` : `Copy code ${code}`}
+            onClick={async (e) => {
+                e.stopPropagation();
+                await copyText(code);
+                setCopied(true);
+                toast({ title: "Code Copied", body: code, tone: "success" });
+                window.setTimeout(() => setCopied(false), 1800);
+            }}
+            className={cn(
+                "tap mt-1.5 ml-1 inline-flex min-h-9 items-center gap-1.5 rounded-full px-3.5",
+                "text-subhead font-semibold transition-colors duration-200 active:scale-[0.97]",
+                copied ? "bg-green/15 text-green" : "bg-tint/12 text-tint"
+            )}
+        >
+            {copied ? (
+                <Check className="size-4" strokeWidth={2.6} />
+            ) : (
+                <KeyRound className="size-4" strokeWidth={2.2} />
+            )}
+            <span className="tabular-nums">{copied ? "Copied" : `Copy ${code}`}</span>
+        </button>
+    );
+}

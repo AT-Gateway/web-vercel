@@ -139,7 +139,10 @@ self.addEventListener("push", (event) => {
     const peerName = data.peerName || "";
     const threadId = data.threadId || threadIdForPeer(peer);
 
-    const title = data.title || peerName || peer || "SMS Gateway";
+    const sender = peerName || peer || "SMS Gateway";
+    const code = typeof data.code === "string" && data.code ? data.code : null;
+    // Verification codes go first so they can be read on the lock screen.
+    const title = data.title || (code ? `${code} · ${sender}` : sender);
     const body = data.body || data.preview || "New message";
 
     const url = peer
@@ -155,27 +158,34 @@ self.addEventListener("push", (event) => {
             icon: "/icon-192.png",
             badge: "/badge-96.png",
             timestamp: typeof data.ts === "number" ? data.ts : Date.now(),
-            data: { url },
+            // Action buttons show on Android and desktop; iOS uses the plain tap.
+            actions: code ? [{ action: "copy-code", title: `Copy ${code}` }] : [],
+            data: { url, code },
         })
     );
 });
 
+// Tapping a notification (or its "Copy" action) opens the conversation. Service
+// workers can't use the clipboard, so a verification code travels in the URL
+// (?code=) and the app copies it (see AppProvider).
 self.addEventListener("notificationclick", (event) => {
-    const url = event.notification?.data?.url || "/";
+    const { url = "/", code = null } = event.notification?.data || {};
     event.notification.close();
+    const target = code
+        ? `${url}${url.includes("?") ? "&" : "?"}code=${encodeURIComponent(code)}`
+        : url;
 
     event.waitUntil(
         self.clients
             .matchAll({ type: "window", includeUncontrolled: true })
             .then((list) => {
-                for (const c of list) {
-                    if ("focus" in c) {
-                        c.focus();
-                        if ("navigate" in c) c.navigate(url);
-                        return;
-                    }
+                const client = list.find((c) => "focus" in c);
+                if (client) {
+                    // Hand off to the running app: no reload, it navigates in place.
+                    client.postMessage({ type: "open-url", url: target });
+                    return client.focus();
                 }
-                return self.clients.openWindow(url);
+                return self.clients.openWindow(target);
             })
     );
 });

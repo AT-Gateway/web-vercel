@@ -16,6 +16,10 @@ type ToastInput = {
     title: string;
     body?: string;
     tone?: ToastTone;
+    /** Runs when the banner is tapped (before it dismisses). */
+    onPress?: () => void;
+    /** How long it stays up, in ms. */
+    duration?: number;
     icon?: React.ReactNode;
 };
 type ToastItem = ToastInput & { id: number; leaving: boolean };
@@ -50,7 +54,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                 () => setItems((prev) => prev.filter((p) => p.id === id || !p.leaving)),
                 320
             );
-            window.setTimeout(() => dismiss(id), VISIBLE_MS);
+            window.setTimeout(() => dismiss(id), t.duration ?? VISIBLE_MS);
         },
         [dismiss]
     );
@@ -90,7 +94,10 @@ function Banner({ item, onDismiss }: { item: ToastItem; onDismiss: () => void })
     return (
         <button
             type="button"
-            onClick={onDismiss}
+            onClick={() => {
+                item.onPress?.();
+                onDismiss();
+            }}
             onPointerDown={(e) => {
                 startY.current = e.clientY;
                 e.currentTarget.setPointerCapture(e.pointerId);

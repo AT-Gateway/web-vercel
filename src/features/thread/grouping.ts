@@ -69,12 +69,7 @@ export function isJumboEmoji(text: string): boolean {
     return count >= 1 && count <= 3;
 }
 
-/** One-time verification codes ("Your code is 482913"), for a "Copy Code" action. */
-export function extractCode(text: string): string | null {
-    if (!/(code|otp|pin|verif|password|passcode|رمز|کد)/i.test(text)) return null;
-    const m = text.match(/(?<![\d-])(\d{4,8})(?![\d-])/);
-    return m ? m[1] : null;
-}
+export { extractCode } from "@/lib/otp";
 
 export function statusText(m: Message): string {
     if (m.direction !== "out") return "";

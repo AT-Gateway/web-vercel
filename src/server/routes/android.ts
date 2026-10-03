@@ -6,6 +6,7 @@ import type { SseHub } from '../realtime/sseHub';
 import { telegramSend } from '../services/telegram';
 import { getTelegramRecipientsForPairing } from '../telegram/recipients';
 import { sendPush } from '../services/push';
+import { extractCode } from '../../lib/otp';
 
 export async function registerAndroidRoutes(
   app: FastifyInstance,
@@ -94,6 +95,9 @@ export async function registerAndroidRoutes(
 
     // Push + Telegram only when inserted
     if (insert.inserted) {
+      // Verification codes are surfaced for one-tap copying in push and Telegram.
+      const code = bodyIsEncrypted ? null : extractCode(bodyText);
+
       // Web push
       if (cfg.vapid.enabled && pairingId) {
         try {
@@ -109,6 +113,7 @@ export async function registerAndroidRoutes(
                 peer: from,
                 peerName,
                 body: bodyIsEncrypted ? '' : bodyText,
+                code,
                 ts,
               });
             } catch (err: any) {
@@ -132,10 +137,19 @@ export async function registerAndroidRoutes(
             const title = peerName ? `${peerName} (${from})` : from;
             const text = bodyIsEncrypted ? '🔒 Encrypted message' : bodyText;
             // No SIM is shown or inferred for inbound SMS; the reply SIM is picked explicitly.
-            const msg = ['📩 New SMS', '', `From: ${title}`, `Gateway: ${gatewayDeviceId}`, '', text].join('\n');
+            const msg = [
+              code ? `🔐 Code: ${code}` : '📩 New SMS',
+              '',
+              `From: ${title}`,
+              `Gateway: ${gatewayDeviceId}`,
+              '',
+              text,
+            ].join('\n');
 
             const replyMarkup = {
               inline_keyboard: [
+                // Telegram's copy-text button copies the code with one tap.
+                ...(code ? [[{ text: `📋 Copy ${code}`, copy_text: { text: code } }]] : []),
                 [
                   { text: '↩️ Reply · SIM 1', callback_data: `r:${id}:0` },
                   { text: '↩️ Reply · SIM 2', callback_data: `r:${id}:1` },
