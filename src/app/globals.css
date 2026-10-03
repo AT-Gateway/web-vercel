@@ -90,11 +90,11 @@
     );
     --glass-blur: calc(14px + var(--glass-tint) * 18px);
     /* Brighter specular sheen across the top of the glass. */
-    /*--glass-sheen: linear-gradient(*/
-    /*    to bottom,*/
-    /*    light-dark(rgb(255 255 255 / 0.5), rgb(255 255 255 / 0.09)) 0%,*/
-    /*    transparent 46%*/
-    /*);*/
+    --glass-sheen: linear-gradient(
+        to bottom,
+        light-dark(rgb(255 255 255 / 0.5), rgb(255 255 255 / 0.09)) 0%,
+        transparent 46%
+    );
     --glass-shadow:
         /* darkened edge */
         0 0 0 0.5px light-dark(rgb(0 0 0 / 0.16), rgb(0 0 0 / 0.75)),
