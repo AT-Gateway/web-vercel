@@ -47,9 +47,42 @@ export function useIsCompact(): boolean {
     return useSyncExternalStore(subscribeCompact, getCompactSnapshot, () => true);
 }
 
-/** Short landscape (phone on its side): use denser chrome. */
+/**
+ * Phone on its side. Decided from the device orientation and the screen's short
+ * side — never from the viewport — so the Android keyboard (which makes the
+ * viewport wide and short) doesn't flip the layout mid-typing.
+ */
+export function isShortScreen(): boolean {
+    if (typeof window === "undefined") return false;
+    const type = window.screen.orientation?.type;
+    const landscape = type
+        ? type.startsWith("landscape")
+        : Math.abs(Number((window as { orientation?: number }).orientation ?? 0)) === 90;
+    // A portrait-shaped viewport is never a phone on its side (the keyboard only
+    // ever shrinks the height); guards against a misreported orientation.
+    const portraitViewport = window.innerWidth < window.innerHeight;
+    return (
+        landscape &&
+        !portraitViewport &&
+        Math.min(window.screen.width, window.screen.height) <= 500
+    );
+}
+
+function subscribeShort(onChange: () => void): () => void {
+    const so = window.screen.orientation;
+    so?.addEventListener("change", onChange);
+    window.addEventListener("orientationchange", onChange);
+    window.addEventListener("resize", onChange);
+    return () => {
+        so?.removeEventListener("change", onChange);
+        window.removeEventListener("orientationchange", onChange);
+        window.removeEventListener("resize", onChange);
+    };
+}
+
+/** Short landscape (phone on its side): use denser chrome. Mirrors `short:` in CSS. */
 export function useIsShort(): boolean {
-    return useMediaQuery("(max-height: 500px) and (orientation: landscape)");
+    return useSyncExternalStore(subscribeShort, isShortScreen, () => false);
 }
 
 export function useReducedMotion(): boolean {

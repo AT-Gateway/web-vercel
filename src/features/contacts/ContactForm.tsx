@@ -1,5 +1,8 @@
 "use client";
 
+import { useRef } from "react";
+import { normalizeDigits } from "@/lib/phone";
+
 /** Inset-grouped text fields for a contact's name and number. */
 export function ContactForm({
     name,
@@ -16,6 +19,10 @@ export function ContactForm({
     onSubmit: () => void;
     lockNumber?: boolean;
 }) {
+    const phoneRef = useRef<HTMLInputElement>(null);
+    // The name field's return key moves on to the number while one is still needed.
+    const needsNumber = !lockNumber && !number.trim();
+
     return (
         <form
             className="px-4"
@@ -31,9 +38,23 @@ export function ContactForm({
                         autoFocus
                         value={name}
                         onChange={(e) => onName(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (
+                                e.key === "Enter" &&
+                                needsNumber &&
+                                !e.nativeEvent.isComposing
+                            ) {
+                                e.preventDefault();
+                                phoneRef.current?.focus();
+                            }
+                        }}
                         placeholder="Name"
-                        autoComplete="name"
-                        enterKeyHint="next"
+                        // "off", not "name": the browser would offer the user's own name.
+                        autoComplete="off"
+                        autoCapitalize="words"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        enterKeyHint={needsNumber ? "next" : "done"}
                         dir="auto"
                         className="hairline-b text-body h-11 w-full bg-transparent pr-4 outline-none"
                     />
@@ -42,12 +63,13 @@ export function ContactForm({
                     <span className="text-subhead text-tint w-16 shrink-0">mobile</span>
                     <span className="sr-only">Phone number</span>
                     <input
+                        ref={phoneRef}
                         value={number}
-                        onChange={(e) => onNumber(e.target.value)}
+                        onChange={(e) => onNumber(normalizeDigits(e.target.value))}
                         placeholder="Phone"
                         type="tel"
                         inputMode="tel"
-                        autoComplete="tel"
+                        autoComplete="off"
                         enterKeyHint="done"
                         readOnly={lockNumber}
                         className="text-body read-only:text-label-2 h-11 w-full bg-transparent pr-4 outline-none"

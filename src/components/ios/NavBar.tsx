@@ -4,9 +4,12 @@ import React from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * iOS 27 navigation bar. Controls float on glass. At rest the bar has no fill,
- * only a plain scroll-edge blur; once content scrolls beneath it a uniform
- * frosted toolbar fades in to keep titles and buttons legible.
+ * iOS 27 navigation bar. Controls float on glass. At rest the bar is fully
+ * transparent; once content scrolls beneath it a uniform frosted toolbar fades
+ * in to keep titles and buttons legible. (No at-rest backdrop blur: in the
+ * Home Screen app the bar reaches the top screen edge, where WebKit's blur
+ * samples past the edge and leaves a permanent washed-out band under the
+ * status bar.)
  */
 export function NavBar({
     title,
@@ -14,7 +17,6 @@ export function NavBar({
     leading,
     trailing,
     center,
-    edge = true,
     scrolled = false,
     className,
 }: {
@@ -25,7 +27,6 @@ export function NavBar({
     trailing?: React.ReactNode;
     /** Custom center content (replaces the inline title). */
     center?: React.ReactNode;
-    edge?: boolean;
     /** Content is scrolled under the bar: show the uniform frosted toolbar. */
     scrolled?: boolean;
     className?: string;
@@ -45,15 +46,6 @@ export function NavBar({
                     scrolled ? "opacity-100" : "opacity-0"
                 )}
             />
-            {edge ? (
-                <div
-                    aria-hidden
-                    className={cn(
-                        "edge-top absolute inset-0 transition-opacity duration-300",
-                        scrolled && "opacity-0"
-                    )}
-                />
-            ) : null}
             <div className="relative flex min-h-[60px] items-center gap-2 px-4 py-2">
                 <div className="pointer-events-auto flex min-w-fit flex-1 items-center justify-start gap-2">
                     {leading}

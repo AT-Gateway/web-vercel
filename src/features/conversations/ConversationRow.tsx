@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import {
     Ban,
     ChevronRight,
@@ -15,7 +16,14 @@ import { Avatar } from "@/components/ios/Avatar";
 import { SwipeRow } from "@/components/ios/SwipeRow";
 import { useContextMenu } from "@/components/ios/Menu";
 
-export function ConversationRow({
+type RowAction = (c: Conversation) => void;
+
+/**
+ * One conversation in the list. Memoized: the callbacks take the conversation,
+ * so the list passes the same stable functions to every row and a row only
+ * re-renders when its own conversation or selection changes.
+ */
+export const ConversationRow = memo(function ConversationRow({
     conversation: c,
     selected,
     onOpen,
@@ -25,10 +33,10 @@ export function ConversationRow({
 }: {
     conversation: Conversation;
     selected: boolean;
-    onOpen: () => void;
-    onToggleRead: () => void;
-    onBlockToggle: () => void;
-    onDelete: () => void;
+    onOpen: RowAction;
+    onToggleRead: RowAction;
+    onBlockToggle: RowAction;
+    onDelete: RowAction;
 }) {
     const unread = c.unreadCount > 0 && !c.blocked;
     const name = c.peerName || c.peer;
@@ -39,17 +47,35 @@ export function ConversationRow({
 
     const menu = useContextMenu({
         label: `Actions for ${name}`,
+        title: (
+            <bdi className="block truncate" dir="auto">
+                {name}
+            </bdi>
+        ),
+        renderPreview: () => (
+            <div className="bg-cell flex h-full items-center gap-3 rounded-[22px] px-4 shadow-[var(--menu-shadow)]">
+                <Avatar name={c.peerName} size={44} />
+                <span className="flex min-w-0 flex-col">
+                    <span className="text-headline truncate" dir="auto">
+                        {name}
+                    </span>
+                    <span className="text-subhead text-label-2 line-clamp-2 text-left">
+                        <bdi>{preview}</bdi>
+                    </span>
+                </span>
+            </div>
+        ),
         sections: [
             [
                 {
                     label: unread ? "Mark as Read" : "Mark as Unread",
                     icon: unread ? <MessageCircle /> : <MessageCircleOff />,
-                    onSelect: onToggleRead,
+                    onSelect: () => onToggleRead(c),
                 },
                 {
                     label: c.blocked ? "Unblock Contact" : "Block Contact",
                     icon: <Hand />,
-                    onSelect: onBlockToggle,
+                    onSelect: () => onBlockToggle(c),
                 },
             ],
             [
@@ -58,7 +84,7 @@ export function ConversationRow({
                     icon: <Trash2 />,
                     keyAction: true,
                     destructive: true,
-                    onSelect: onDelete,
+                    onSelect: () => onDelete(c),
                 },
             ],
         ],
@@ -73,7 +99,7 @@ export function ConversationRow({
                         label: unread ? "Read" : "Unread",
                         icon: unread ? <MessageCircle /> : <MessageCircleOff />,
                         tone: "blue",
-                        onAction: onToggleRead,
+                        onAction: () => onToggleRead(c),
                     },
                 ]}
                 trailing={[
@@ -81,20 +107,21 @@ export function ConversationRow({
                         label: "Delete",
                         icon: <Trash2 />,
                         tone: "red",
-                        onAction: onDelete,
+                        onAction: () => onDelete(c),
                     },
                     {
                         label: c.blocked ? "Unblock" : "Block",
                         icon: <Hand />,
                         tone: "orange",
-                        onAction: onBlockToggle,
+                        onAction: () => onBlockToggle(c),
                     },
                 ]}
             >
                 <button
                     type="button"
                     {...menu.triggerProps}
-                    onClick={onOpen}
+                    onClick={() => onOpen(c)}
+                    data-thread-id={c.threadId}
                     aria-current={selected ? "page" : undefined}
                     aria-label={[
                         name,
@@ -107,23 +134,24 @@ export function ConversationRow({
                         .join(", ")}
                     className={cn(
                         "tap group/conv relative flex w-full items-center text-left [-webkit-touch-callout:none]",
-                        "transition-colors duration-150",
                         selected
-                            ? "md:bg-tint md:rounded-[18px] md:text-white"
-                            : "active:bg-fill-4 md:hover:bg-fill-4",
-                        "md:mx-2 md:w-[calc(100%-16px)] md:rounded-[18px]"
+                            ? "split:bg-tint split:rounded-[18px] split:text-white"
+                            : "cell-press split:hover:bg-fill-4",
+                        "split:mx-2 split:w-[calc(100%-16px)] split:rounded-[18px]",
+                        // The lifted preview stands in for the row while its menu is open.
+                        menu.isOpen && "opacity-0"
                     )}
                 >
                     {/* Unread indicator gutter */}
                     <span
                         aria-hidden
-                        className="flex w-6 shrink-0 justify-center self-stretch pt-[30px] md:w-5"
+                        className="split:w-5 flex w-6 shrink-0 justify-center self-stretch pt-[30px]"
                     >
                         {unread ? (
                             <span
                                 className={cn(
                                     "bg-tint size-[10px] rounded-full",
-                                    selected && "md:bg-white"
+                                    selected && "split:bg-white"
                                 )}
                             />
                         ) : null}
@@ -137,7 +165,7 @@ export function ConversationRow({
                             // Hairline separator from the text edge to the trailing edge.
                             "border-separator border-b-[0.5px]",
                             "group-last/item:border-b-0",
-                            selected && "md:border-transparent"
+                            selected && "split:border-transparent"
                         )}
                     >
                         <span className="flex items-baseline gap-2">
@@ -150,7 +178,7 @@ export function ConversationRow({
                                         aria-hidden
                                         className={cn(
                                             "text-label-2 size-[14px] shrink-0",
-                                            selected && "md:text-white/80"
+                                            selected && "split:text-white/80"
                                         )}
                                         strokeWidth={2.4}
                                     />
@@ -159,25 +187,25 @@ export function ConversationRow({
                             <span
                                 className={cn(
                                     "text-subhead text-label-2 flex shrink-0 items-center gap-0.5",
-                                    selected && "md:text-white/80"
+                                    selected && "split:text-white/80"
                                 )}
                             >
                                 {date}
                                 <ChevronRight
                                     aria-hidden
-                                    className="text-label-3 size-[15px] md:hidden"
+                                    className="text-label-3 split:hidden size-[15px]"
                                     strokeWidth={2.6}
                                 />
                             </span>
                         </span>
+                        {/* Leading-aligned like the name; <bdi> keeps RTL text ordered. */}
                         <span
-                            dir="auto"
                             className={cn(
-                                "text-subhead text-label-2 mt-0.5 line-clamp-2 min-h-[2lh] text-start",
-                                selected && "md:text-white/85"
+                                "text-subhead text-label-2 mt-0.5 line-clamp-2 min-h-[2lh] text-left",
+                                selected && "split:text-white/85"
                             )}
                         >
-                            {preview}
+                            <bdi>{preview}</bdi>
                         </span>
                     </span>
                 </button>
@@ -185,11 +213,11 @@ export function ConversationRow({
             {menu.node}
         </>
     );
-}
+});
 
 export function ConversationRowSkeleton() {
     return (
-        <div aria-hidden className="flex items-center pl-6 md:pl-7">
+        <div aria-hidden className="split:pl-7 flex items-center pl-6">
             <span className="bg-fill-3 my-[10px] size-11 shrink-0 animate-pulse rounded-full" />
             <span className="border-separator ml-3 flex flex-1 flex-col gap-2 border-b-[0.5px] py-4 pr-4">
                 <span className="flex justify-between">

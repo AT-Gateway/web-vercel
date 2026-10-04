@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Copy, Hand, Pencil, UserPlus } from "lucide-react";
 import { Sheet, SheetBody, SheetHeader } from "@/components/ios/Sheet";
 import { Avatar } from "@/components/ios/Avatar";
 import { Button } from "@/components/ios/Button";
 import { List, Row, Section } from "@/components/ios/List";
 import { useConfirm } from "@/components/ios/ConfirmDialog";
+import { Spinner } from "@/components/ios/Spinner";
 import { useToast } from "@/components/ios/Toast";
 import { useApp } from "@/features/app/AppProvider";
 import { ContactForm } from "@/features/contacts/ContactForm";
@@ -50,23 +51,67 @@ export function ContactInfoSheet({
         unblockThread,
         deleteThread,
         saveContact,
+        pendingBlock,
     } = useApp();
     const toast = useToast();
-    const [confirmNode, confirm] = useConfirm();
+    const [confirmNode, confirm, cancelConfirm] = useConfirm();
     const [editing, setEditing] = useState(false);
     const [name, setName] = useState("");
     const [number, setNumber] = useState("");
     const [saving, setSaving] = useState(false);
 
+    // The thread the sheet is about right now, for checks after an await.
+    const tidRef = useRef(activeThreadId);
+    tidRef.current = activeThreadId;
+
+    // A confirm must never outlive the sheet or the conversation it was asked about.
     useEffect(() => {
-        if (!open) return;
+        if (!open) cancelConfirm();
+    }, [open, cancelConfirm]);
+    useEffect(() => cancelConfirm(), [activeThreadId, cancelConfirm]);
+
+    // The draft survives closing and reopening the sheet (a swipe-down mid-edit
+    // keeps the form); only a different conversation discards it.
+    const lastTid = useRef(activeThreadId);
+    useEffect(() => {
+        if (lastTid.current === activeThreadId) return;
+        lastTid.current = activeThreadId;
         setEditing(false);
+    }, [activeThreadId]);
+
+    const startEditing = () => {
         setName(activeName ?? "");
         setNumber(activePeer);
-    }, [open, activeName, activePeer]);
+        setEditing(true);
+    };
 
     const title = activeName || activePeer;
     const valid = name.trim().length > 0 && number.trim().length > 0;
+    const dirty = editing && (name !== (activeName ?? "") || number !== activePeer);
+    const blockPending = Boolean(activeThreadId && pendingBlock.has(activeThreadId));
+
+    const discardOpen = useRef(false);
+    const cancelEditing = async () => {
+        if (dirty) {
+            discardOpen.current = true;
+            const ok = await confirm({
+                title: "Discard Changes?",
+                confirmLabel: "Discard Changes",
+            });
+            discardOpen.current = false;
+            if (!ok) return;
+        }
+        setEditing(false);
+    };
+
+    // Android Back while editing. If "Discard Changes?" is already up, Back means
+    // "keep editing": dismiss it instead of asking again. (CloseWatchers created
+    // without a fresh gesture share a group, so one Back can reach both the
+    // confirm's watcher and this sheet's.)
+    const onEditBack = () => {
+        if (discardOpen.current) cancelConfirm();
+        else void cancelEditing();
+    };
 
     const save = async () => {
         if (!valid || saving) return;
@@ -91,6 +136,8 @@ export function ContactInfoSheet({
             onOpenChange={onOpenChange}
             detent="large"
             description={`Contact details for ${title}`}
+            // Android Back leaves the editor like Cancel does.
+            onBack={editing ? onEditBack : undefined}
         >
             {editing ? (
                 <>
@@ -99,9 +146,9 @@ export function ContactInfoSheet({
                         leading={
                             <Button
                                 variant="plain"
-                                size="sm"
+                                size="bar"
                                 className="-ml-2"
-                                onClick={() => setEditing(false)}
+                                onClick={() => void cancelEditing()}
                             >
                                 Cancel
                             </Button>
@@ -109,7 +156,7 @@ export function ContactInfoSheet({
                         trailing={
                             <Button
                                 variant="prominent"
-                                size="sm"
+                                size="bar"
                                 disabled={!valid}
                                 loading={saving}
                                 onClick={save}
@@ -128,6 +175,7 @@ export function ContactInfoSheet({
                             onName={setName}
                             onNumber={setNumber}
                             onSubmit={save}
+                            lockNumber
                         />
                     </SheetBody>
                 </>
@@ -139,7 +187,7 @@ export function ContactInfoSheet({
                             <Button
                                 variant="glass"
                                 tone="label"
-                                size="sm"
+                                size="bar"
                                 onClick={() => onOpenChange(false)}
                             >
                                 Done
@@ -150,7 +198,7 @@ export function ContactInfoSheet({
                         <div className="flex flex-col items-center px-6 pb-6 text-center">
                             <Avatar name={activeName} size={96} />
                             <h2
-                                className="text-title-1 mt-3 font-bold break-all"
+                                className="text-title-1 mt-3 font-bold text-balance wrap-anywhere"
                                 dir="auto"
                             >
                                 {title}
@@ -177,7 +225,7 @@ export function ContactInfoSheet({
                             <QuickAction
                                 icon={activeName ? <Pencil /> : <UserPlus />}
                                 label={activeName ? "edit" : "add"}
-                                onClick={() => setEditing(true)}
+                                onClick={startEditing}
                             />
                         </div>
 
@@ -205,14 +253,14 @@ export function ContactInfoSheet({
                                         activeName ? "Edit Contact" : "Add to Contacts"
                                     }
                                     tone="tint"
-                                    onClick={() => setEditing(true)}
+                                    onClick={startEditing}
                                 />
                             </Section>
 
                             <Section
                                 footer={
                                     activeBlocked
-                                        ? "Messages from this number are discarded before they reach the gateway database."
+                                        ? "Messages from this number are discarded and never saved."
                                         : undefined
                                 }
                             >
@@ -223,10 +271,16 @@ export function ContactInfoSheet({
                                             : "Block this Contact"
                                     }
                                     tone={activeBlocked ? "tint" : "red"}
+                                    disabled={blockPending}
+                                    accessory={
+                                        blockPending ? <Spinner size={18} /> : undefined
+                                    }
                                     onClick={async () => {
-                                        if (!activeThreadId) return;
+                                        const tid = activeThreadId;
+                                        const peer = activePeer;
+                                        if (!tid) return;
                                         if (activeBlocked) {
-                                            await unblockThread(activeThreadId);
+                                            await unblockThread(tid);
                                             return;
                                         }
                                         const ok = await confirm({
@@ -235,24 +289,25 @@ export function ContactInfoSheet({
                                                 "New messages from this number won't be saved or forwarded.",
                                             confirmLabel: "Block Contact",
                                         });
-                                        if (ok)
-                                            await blockThread(activeThreadId, activePeer);
+                                        if (!ok || tidRef.current !== tid) return;
+                                        await blockThread(tid, peer);
                                     }}
                                 />
                                 <Row
                                     title="Delete Conversation"
                                     tone="red"
                                     onClick={async () => {
-                                        if (!activeThreadId) return;
+                                        const tid = activeThreadId;
+                                        if (!tid) return;
                                         const ok = await confirm({
-                                            title: "Delete this conversation?",
+                                            title: `Delete conversation with ${title}?`,
                                             message:
                                                 "All messages with this contact will be permanently deleted.",
                                             confirmLabel: "Delete",
                                         });
-                                        if (!ok) return;
+                                        if (!ok || tidRef.current !== tid) return;
                                         onOpenChange(false);
-                                        await deleteThread(activeThreadId);
+                                        await deleteThread(tid);
                                     }}
                                 />
                             </Section>

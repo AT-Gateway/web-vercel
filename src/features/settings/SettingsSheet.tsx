@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
     Bell,
     Copy,
@@ -20,8 +20,15 @@ import {
     telegramStatus,
     type TelegramStatusRes,
 } from "@/lib/api";
-import { formatCountdown } from "@/lib/format";
-import { currentPushEnabled, disablePush, enablePush, pushSupport } from "@/lib/push";
+import { formatCountdown, pluralize } from "@/lib/format";
+import {
+    currentPushEnabled,
+    disablePush,
+    enablePush,
+    prefetchVapidKey,
+    pushSupport,
+} from "@/lib/push";
+import { isIOS, isStandalone } from "@/lib/device";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetBody, SheetHeader } from "@/components/ios/Sheet";
 import { Button } from "@/components/ios/Button";
@@ -37,6 +44,7 @@ import { useApp } from "@/features/app/AppProvider";
 import { AppIcon } from "@/components/ios/AppIcon";
 import {
     PAGE_TITLES,
+    PageTitle,
     type SettingsPage,
     SettingsNavContext,
     useSettingsNav,
@@ -55,6 +63,18 @@ function useNow(active: boolean) {
     }, [active]);
     return now;
 }
+
+/** "5 minutes", "3 hours", "2 days" for the gateway's last-seen line. */
+function formatIdle(ms: number): string {
+    const mins = Math.max(1, Math.round(ms / 60_000));
+    if (mins < 60) return pluralize(mins, "minute");
+    const hours = Math.round(mins / 60);
+    if (hours < 48) return pluralize(hours, "hour");
+    return pluralize(Math.round(hours / 24), "day");
+}
+
+/** While an invite code is live, how often to look for the device that uses it. */
+const INVITE_POLL_MS = 4000;
 
 export function SettingsSheet({
     open,
@@ -82,6 +102,14 @@ export function SettingsSheet({
         setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
     }, []);
 
+    // Android Back pops a pushed page first, then closes the sheet.
+    const depth = useRef(stack.length);
+    depth.current = stack.length;
+    const onBack = useCallback(() => {
+        if (depth.current > 1) pop();
+        else onOpenChange(false);
+    }, [pop, onOpenChange]);
+
     const page = stack[stack.length - 1];
     const previous = stack[stack.length - 2];
     const nav = useMemo(
@@ -95,7 +123,12 @@ export function SettingsSheet({
     );
 
     return (
-        <Sheet open={open} onOpenChange={onOpenChange} description="App settings">
+        <Sheet
+            open={open}
+            onOpenChange={onOpenChange}
+            onBack={onBack}
+            description="App settings"
+        >
             <SettingsNavContext.Provider value={nav}>
                 <div
                     key={stack.length}
@@ -123,7 +156,7 @@ export function SettingsSheet({
 }
 
 function RootPage() {
-    const { session, signOut, blockedChats } = useApp();
+    const { session, signOut, blockedChats, gatewayIdleMs } = useApp();
     const nav = useSettingsNav();
     const toast = useToast();
     const [confirmNode, confirm] = useConfirm();
@@ -141,19 +174,72 @@ function RootPage() {
         null
     );
     const [inviteBusy, setInviteBusy] = useState(false);
+    const [showAdvanced, setShowAdvanced] = useState(false);
     const now = useNow(Boolean(invite));
     const inviteLive = invite && invite.expiresAt > now ? invite : null;
+    const inviteCode = inviteLive?.code ?? null;
+    const devicesRef = useRef(devices);
+    devicesRef.current = devices;
 
     useEffect(() => {
         currentPushEnabled().then(setPushOn);
         if (!session) return;
+        // Fetched now so turning notifications on can ask for permission
+        // straight away, while the tap still counts as a user gesture.
+        if (support.supported) void prefetchVapidKey();
         telegramStatus(session.pairToken)
             .then(setTelegram)
             .catch(() => {});
         listDevices(session.pairToken)
             .then((r) => setDevices(r.devices ?? []))
             .catch(() => {});
-    }, [session]);
+    }, [session, support.supported]);
+
+    // While an invite code is up, watch for the browser that redeems it.
+    useEffect(() => {
+        if (!session || !inviteCode) return;
+        let cancelled = false;
+        let known: Set<string> | null = devicesRef.current
+            ? new Set(devicesRef.current.map((d) => d.deviceId))
+            : null;
+        const check = async () => {
+            try {
+                const r = await listDevices(session.pairToken);
+                if (cancelled) return;
+                const list = r.devices ?? [];
+                setDevices(list);
+                if (!known) {
+                    known = new Set(list.map((d) => d.deviceId));
+                    return;
+                }
+                const joined = list.find(
+                    (d) => d.deviceType === "pwa" && !known?.has(d.deviceId)
+                );
+                if (joined) {
+                    cancelled = true;
+                    toast({
+                        title: `${joined.deviceLabel || "New Device"} Connected`,
+                        tone: "success",
+                    });
+                    setInvite(null);
+                }
+            } catch {
+                // Try again on the next tick.
+            }
+        };
+        const timer = window.setInterval(check, INVITE_POLL_MS);
+        const onVisible = () => {
+            if (document.visibilityState === "visible") void check();
+        };
+        document.addEventListener("visibilitychange", onVisible);
+        window.addEventListener("focus", onVisible);
+        return () => {
+            cancelled = true;
+            window.clearInterval(timer);
+            document.removeEventListener("visibilitychange", onVisible);
+            window.removeEventListener("focus", onVisible);
+        };
+    }, [session, inviteCode, toast]);
 
     if (!session) return null;
 
@@ -204,6 +290,30 @@ function RootPage() {
         }
     };
 
+    const copyToken = async () => {
+        const ok = await confirm({
+            title: "Copy Access Token?",
+            message: "Anyone with this token can read and send your messages.",
+            confirmLabel: "Copy",
+            destructive: false,
+        });
+        if (ok) await copy(session.pairToken, "Token");
+    };
+
+    const gatewayStatus =
+        gatewayIdleMs == null
+            ? "Android gateway"
+            : gatewayIdleMs < 10 * 60_000
+              ? "Android gateway · Online"
+              : `Android gateway · Last seen ${formatIdle(gatewayIdleMs)} ago`;
+
+    const pushFooter =
+        isIOS() && !isStandalone()
+            ? "Add this app to your Home Screen to get notifications, then use Invite Another Device below to get a code for the Home Screen app."
+            : !support.supported
+              ? support.reason
+              : "Get notified on this device when a new SMS arrives.";
+
     const telegramValue = !telegram
         ? undefined
         : !telegram.configured
@@ -215,9 +325,9 @@ function RootPage() {
     return (
         <>
             <SheetHeader
-                title="Settings"
+                title={<PageTitle>Settings</PageTitle>}
                 trailing={
-                    <Button variant="glass" tone="label" size="sm" onClick={nav.close}>
+                    <Button variant="glass" tone="label" size="bar" onClick={nav.close}>
                         Done
                     </Button>
                 }
@@ -237,19 +347,13 @@ function RootPage() {
                                     ) : null}
                                 </span>
                                 <span className="text-subhead text-label-2 truncate">
-                                    Gateway “{session.gatewayDeviceId}”
+                                    {gatewayStatus}
                                 </span>
                             </div>
                         </div>
                     </Section>
 
-                    <Section
-                        footer={
-                            !support.supported
-                                ? support.reason
-                                : "Get notified on this device when a new SMS arrives."
-                        }
-                    >
+                    <Section footer={pushFooter}>
                         <Row
                             icon={
                                 <IconTile className="bg-red">
@@ -330,7 +434,7 @@ function RootPage() {
                         {inviteLive ? (
                             <div className="flex flex-col items-center px-4 pt-4 pb-3">
                                 <span
-                                    className="font-mono text-[2.5rem] leading-none font-semibold tracking-[0.18em] tabular-nums"
+                                    className="font-mono text-[2.5rem] leading-none font-semibold tracking-[0.18em] tabular-nums select-text [-webkit-touch-callout:default]"
                                     aria-label={`Invite code ${inviteLive.code.split("").join(" ")}`}
                                 >
                                     {inviteLive.code}
@@ -428,43 +532,65 @@ function RootPage() {
                         </div>
                     </Section>
 
-                    <Section header="This Device">
+                    <Section>
+                        {showAdvanced ? (
+                            <>
+                                <Row
+                                    title="Pairing ID"
+                                    value={
+                                        <span className="text-subhead font-mono">
+                                            {session.pairingId.slice(0, 8)}…
+                                        </span>
+                                    }
+                                    onClick={() => copy(session.pairingId, "Pairing ID")}
+                                    ariaLabel="Copy pairing ID"
+                                />
+                                <Row
+                                    title="Access Token"
+                                    value={
+                                        <span className="text-subhead font-mono">
+                                            ••••{session.pairToken.slice(-4)}
+                                        </span>
+                                    }
+                                    onClick={copyToken}
+                                    ariaLabel="Copy access token"
+                                />
+                            </>
+                        ) : null}
                         <Row
-                            title="Pairing ID"
-                            value={
-                                <span className="text-subhead font-mono">
-                                    {session.pairingId.slice(0, 8)}…
-                                </span>
-                            }
-                            onClick={() => copy(session.pairingId, "Pairing ID")}
-                            ariaLabel="Copy pairing ID"
-                        />
-                        <Row
-                            title="Access Token"
-                            value={
-                                <span className="text-subhead font-mono">
-                                    ••••{session.pairToken.slice(-4)}
-                                </span>
-                            }
-                            onClick={() => copy(session.pairToken, "Token")}
-                            ariaLabel="Copy access token"
+                            title={showAdvanced ? "Hide Advanced" : "Show Advanced"}
+                            tone="tint"
+                            onClick={() => setShowAdvanced((v) => !v)}
                         />
                     </Section>
 
-                    <Section footer="Signing out removes this browser's access. You'll need a new invite code to pair again.">
-                        <Row
-                            title="Sign Out"
-                            tone="red"
-                            centered
-                            onClick={async () => {
-                                const ok = await confirm({
-                                    title: "Sign out of this device?",
-                                    confirmLabel: "Sign Out",
-                                });
-                                if (ok) signOut();
-                            }}
-                        />
-                    </Section>
+                    {session.demo ? (
+                        <Section footer="Go back to the pairing screen to connect your Android gateway.">
+                            <Row
+                                title="Exit Demo"
+                                tone="tint"
+                                centered
+                                onClick={signOut}
+                            />
+                        </Section>
+                    ) : (
+                        <Section footer="Signing out removes this browser's access. You'll need a new invite code to pair again.">
+                            <Row
+                                title="Sign Out"
+                                tone="red"
+                                centered
+                                onClick={async () => {
+                                    const ok = await confirm({
+                                        title: "Sign out of this device?",
+                                        message:
+                                            "This browser will lose access. You'll need a new invite code to reconnect.",
+                                        confirmLabel: "Sign Out",
+                                    });
+                                    if (ok) signOut();
+                                }}
+                            />
+                        </Section>
+                    )}
                 </List>
             </SheetBody>
             {confirmNode}

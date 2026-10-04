@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { MessageSquarePlus, UserRoundSearch } from "lucide-react";
 import { type Contact, listContacts } from "@/lib/api";
-import { cleanPhone, looksLikePhone } from "@/lib/phone";
+import { cleanPhone, looksLikePhone, normalizeDigits } from "@/lib/phone";
+import { cn } from "@/lib/utils";
 import { Sheet, SheetBody, SheetHeader } from "@/components/ios/Sheet";
 import { Button } from "@/components/ios/Button";
 import { Avatar } from "@/components/ios/Avatar";
 import { Spinner } from "@/components/ios/Spinner";
 import { ContentUnavailable } from "@/components/ios/ContentUnavailable";
+import { useDismissKeyboardOnDrag } from "@/hooks/useDismissKeyboardOnDrag";
 import { useApp } from "@/features/app/AppProvider";
 
 function groupByLetter(contacts: Contact[]): Array<[string, Contact[]]> {
@@ -32,11 +34,23 @@ export function NewMessageSheet({
 }) {
     const { session, openThread } = useApp();
     const [to, setTo] = useState("");
-    const [contacts, setContacts] = useState<Contact[]>([]);
+    // Results remember the query they answer, so Go never acts on stale ones.
+    const [results, setResults] = useState<{ for: string; contacts: Contact[] }>({
+        for: "",
+        contacts: [],
+    });
     const [loading, setLoading] = useState(false);
+    const [loadError, setLoadError] = useState(false);
+    // Go was pressed before the results for the current query arrived.
+    const [pendingGo, setPendingGo] = useState(false);
+    const dragProps = useDismissKeyboardOnDrag({ direction: "any" });
+    const query = to.trim();
 
     useEffect(() => {
-        if (open) setTo("");
+        if (open) {
+            setTo("");
+            setPendingGo(false);
+        }
     }, [open]);
 
     useEffect(() => {
@@ -45,26 +59,46 @@ export function NewMessageSheet({
         setLoading(true);
         const t = window.setTimeout(
             () => {
-                listContacts(session.pairToken, to.trim(), 120)
-                    .then((r) => !stale && setContacts(r.contacts ?? []))
-                    .catch(() => !stale && setContacts([]))
+                listContacts(session.pairToken, query, 120)
+                    .then((r) => {
+                        if (stale) return;
+                        setResults({ for: query, contacts: r.contacts ?? [] });
+                        setLoadError(false);
+                    })
+                    .catch(() => {
+                        if (stale) return;
+                        setResults({ for: query, contacts: [] });
+                        setLoadError(true);
+                    })
                     .finally(() => !stale && setLoading(false));
             },
-            to ? 200 : 0
+            query ? 200 : 0
         );
         return () => {
             stale = true;
             window.clearTimeout(t);
         };
-    }, [open, session, to]);
+    }, [open, session, query]);
 
-    const groups = useMemo(() => groupByLetter(contacts), [contacts]);
+    const groups = useMemo(() => groupByLetter(results.contacts), [results.contacts]);
+    // The first row shown is what Go opens.
+    const topHit: Contact | undefined = groups[0]?.[1][0];
     const asNumber = looksLikePhone(to) ? cleanPhone(to) : null;
+    const showTopHit = Boolean(query) && !asNumber && results.for === query;
 
-    const start = (peer: string, name?: string | null) => {
-        openThread({ peer, name });
-        onOpenChange(false);
-    };
+    const start = useCallback(
+        (peer: string, name?: string | null) => {
+            openThread({ peer, name });
+            onOpenChange(false);
+        },
+        [openThread, onOpenChange]
+    );
+
+    useEffect(() => {
+        if (!pendingGo || results.for !== query) return;
+        setPendingGo(false);
+        if (topHit) start(topHit.rawNumber || topHit.norm, topHit.displayName);
+    }, [pendingGo, results.for, query, topHit, start]);
 
     return (
         <Sheet
@@ -78,7 +112,7 @@ export function NewMessageSheet({
                     <Button
                         variant="glass"
                         tone="label"
-                        size="sm"
+                        size="bar"
                         onClick={() => onOpenChange(false)}
                     >
                         Cancel
@@ -90,11 +124,12 @@ export function NewMessageSheet({
                 onSubmit={(e) => {
                     e.preventDefault();
                     if (asNumber) start(asNumber);
-                    else if (contacts[0])
-                        start(
-                            contacts[0].rawNumber || contacts[0].norm,
-                            contacts[0].displayName
-                        );
+                    else if (!query) return;
+                    else if (results.for === query) {
+                        if (topHit) {
+                            start(topHit.rawNumber || topHit.norm, topHit.displayName);
+                        }
+                    } else setPendingGo(true);
                 }}
             >
                 <label htmlFor="new-message-to" className="text-body text-label-2">
@@ -104,7 +139,10 @@ export function NewMessageSheet({
                     id="new-message-to"
                     autoFocus
                     value={to}
-                    onChange={(e) => setTo(e.target.value)}
+                    onChange={(e) => {
+                        setTo(normalizeDigits(e.target.value));
+                        setPendingGo(false);
+                    }}
                     placeholder="Name or phone number"
                     autoComplete="off"
                     autoCorrect="off"
@@ -115,18 +153,18 @@ export function NewMessageSheet({
                 />
             </form>
 
-            <SheetBody>
+            <SheetBody {...dragProps}>
                 {asNumber ? (
                     <button
                         type="button"
                         onClick={() => start(asNumber)}
-                        className="tap active:bg-fill-4 flex w-full items-center gap-3 px-4 py-2.5 text-left"
+                        className="tap cell-press flex w-full items-center gap-3 px-4 py-2.5 text-left"
                     >
                         <span className="bg-tint flex size-10 items-center justify-center rounded-full text-white">
                             <MessageSquarePlus className="size-5" strokeWidth={2.2} />
                         </span>
-                        <span className="flex flex-col">
-                            <span className="text-body">Send to {asNumber}</span>
+                        <span className="flex min-w-0 flex-1 flex-col">
+                            <span className="text-body truncate">Send to {asNumber}</span>
                             <span className="text-subhead text-label-2">
                                 Text Message
                             </span>
@@ -134,12 +172,18 @@ export function NewMessageSheet({
                     </button>
                 ) : null}
 
-                {loading && contacts.length === 0 ? (
+                {loadError ? (
+                    <p role="status" className="text-footnote text-label-2 px-4 py-3">
+                        Couldn&apos;t load contacts. You can still type a phone number.
+                    </p>
+                ) : null}
+
+                {loading && results.contacts.length === 0 && !loadError ? (
                     <div className="flex justify-center py-10">
                         <Spinner />
                     </div>
                 ) : groups.length === 0 ? (
-                    asNumber ? null : (
+                    asNumber || loadError ? null : (
                         <ContentUnavailable
                             className="pt-14"
                             icon={<UserRoundSearch />}
@@ -150,41 +194,54 @@ export function NewMessageSheet({
                 ) : (
                     groups.map(([letter, list]) => (
                         <section key={letter} aria-label={letter}>
-                            <h3 className="bg-grouped/90 text-footnote text-label-2 sticky top-0 z-10 px-4 py-1 font-semibold backdrop-blur-md">
+                            <h3 className="bg-grouped text-footnote text-label-2 sticky top-0 z-10 px-4 py-1 font-semibold">
                                 {letter}
                             </h3>
                             <ul>
-                                {list.map((c) => (
-                                    <li key={c.norm}>
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                start(
-                                                    c.rawNumber || c.norm,
-                                                    c.displayName
-                                                )
-                                            }
-                                            className="tap active:bg-fill-4 flex w-full items-center gap-3 pl-4 text-left"
-                                        >
-                                            <Avatar
-                                                name={c.displayName}
-                                                size={36}
-                                                className="my-1.5"
-                                            />
-                                            <span className="border-separator flex min-w-0 flex-1 flex-col border-b-[0.5px] py-2 pr-4">
-                                                <span
-                                                    className="text-body truncate"
-                                                    dir="auto"
-                                                >
-                                                    {c.displayName}
+                                {list.map((c) => {
+                                    const isTop = showTopHit && c === topHit;
+                                    return (
+                                        <li key={c.norm}>
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    start(
+                                                        c.rawNumber || c.norm,
+                                                        c.displayName
+                                                    )
+                                                }
+                                                className={cn(
+                                                    "tap cell-press flex w-full items-center gap-3 pl-4 text-left",
+                                                    isTop && "bg-fill-4"
+                                                )}
+                                            >
+                                                <Avatar
+                                                    name={c.displayName}
+                                                    size={36}
+                                                    className="my-1.5"
+                                                />
+                                                <span className="border-separator flex min-w-0 flex-1 items-center gap-2 border-b-[0.5px] py-2 pr-4">
+                                                    <span className="flex min-w-0 flex-1 flex-col">
+                                                        <span
+                                                            className="text-body truncate"
+                                                            dir="auto"
+                                                        >
+                                                            {c.displayName}
+                                                        </span>
+                                                        <span className="text-footnote text-label-2 truncate">
+                                                            {c.rawNumber || c.norm}
+                                                        </span>
+                                                    </span>
+                                                    {isTop ? (
+                                                        <span className="text-caption-1 text-label-2 shrink-0">
+                                                            Top Hit
+                                                        </span>
+                                                    ) : null}
                                                 </span>
-                                                <span className="text-footnote text-label-2 truncate">
-                                                    {c.rawNumber || c.norm}
-                                                </span>
-                                            </span>
-                                        </button>
-                                    </li>
-                                ))}
+                                            </button>
+                                        </li>
+                                    );
+                                })}
                             </ul>
                         </section>
                     ))

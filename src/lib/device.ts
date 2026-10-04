@@ -3,7 +3,8 @@ export function isIOS(): boolean {
     if (typeof navigator === "undefined") return false;
     const ua = navigator.userAgent;
     return (
-        /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)
+        /iPad|iPhone|iPod/.test(ua) ||
+        (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)
     );
 }
 

@@ -1,40 +1,66 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Plus, UsersRound } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Info, Plus, UsersRound, WifiOff } from "lucide-react";
 import { type Contact, listContacts } from "@/lib/api";
+import { normalizeDigits } from "@/lib/phone";
 import { SheetBody } from "@/components/ios/Sheet";
 import { Avatar } from "@/components/ios/Avatar";
 import { Button, IconButton } from "@/components/ios/Button";
 import { SearchField } from "@/components/ios/SearchField";
 import { Spinner } from "@/components/ios/Spinner";
 import { ContentUnavailable } from "@/components/ios/ContentUnavailable";
+import { useBackDismiss } from "@/hooks/useBackDismiss";
+import {
+    blurActiveField,
+    useDismissKeyboardOnDrag,
+} from "@/hooks/useDismissKeyboardOnDrag";
 import { useApp } from "@/features/app/AppProvider";
 import { PageHeader, useSettingsNav } from "@/features/settings/SettingsNav";
 import { ContactForm } from "@/features/contacts/ContactForm";
 
 export function ContactsPage() {
-    const { session } = useApp();
+    const { session, openThread } = useApp();
     const nav = useSettingsNav();
     const [query, setQuery] = useState("");
     const [contacts, setContacts] = useState<Contact[] | null>(null);
+    const [error, setError] = useState(false);
+    const [attempt, setAttempt] = useState(0);
+    const dragProps = useDismissKeyboardOnDrag({ direction: "any" });
+    const q = query.trim();
+
+    // Android Back clears the search before it leaves the page.
+    useBackDismiss(q.length > 0, () => {
+        setQuery("");
+        blurActiveField();
+    });
 
     useEffect(() => {
         if (!session) return;
         let stale = false;
         const t = window.setTimeout(
             () => {
-                listContacts(session.pairToken, query.trim(), 200)
-                    .then((r) => !stale && setContacts(r.contacts ?? []))
-                    .catch(() => !stale && setContacts([]));
+                listContacts(session.pairToken, q, 200)
+                    .then((r) => {
+                        if (stale) return;
+                        setContacts(r.contacts ?? []);
+                        setError(false);
+                    })
+                    .catch(() => !stale && setError(true));
             },
-            query ? 220 : 0
+            q ? 220 : 0
         );
         return () => {
             stale = true;
             window.clearTimeout(t);
         };
-    }, [session, query]);
+    }, [session, q, attempt]);
+
+    const reload = useCallback(() => {
+        setError(false);
+        setContacts(null);
+        setAttempt((n) => n + 1);
+    }, []);
 
     const sorted = (contacts ?? [])
         .slice()
@@ -55,11 +81,23 @@ export function ContactsPage() {
             <SearchField
                 className="shrink-0 px-4 pb-3"
                 value={query}
-                onChange={setQuery}
+                onChange={(v) => setQuery(normalizeDigits(v))}
                 placeholder="Search Contacts"
             />
-            <SheetBody>
-                {contacts === null ? (
+            <SheetBody {...dragProps}>
+                {error ? (
+                    <ContentUnavailable
+                        className="pt-12"
+                        icon={<WifiOff />}
+                        title="Can't Load Contacts"
+                        description="Check your connection."
+                        actions={
+                            <Button variant="gray" onClick={reload}>
+                                Try Again
+                            </Button>
+                        }
+                    />
+                ) : contacts === null ? (
                     <div className="flex justify-center py-10">
                         <Spinner />
                     </div>
@@ -90,20 +128,25 @@ export function ContactsPage() {
                     <div className="px-4 pb-8">
                         <ul className="bg-cell overflow-hidden rounded-[22px]">
                             {sorted.map((c) => (
-                                <li key={c.norm} className="group/row">
+                                <li key={c.norm} className="group/row flex items-stretch">
                                     <button
                                         type="button"
-                                        onClick={() =>
-                                            nav.push({ name: "contact-edit", contact: c })
-                                        }
-                                        className="tap active:bg-cell-pressed flex w-full items-center gap-3 pl-4 text-left"
+                                        onClick={() => {
+                                            openThread({
+                                                peer: c.rawNumber || c.norm,
+                                                name: c.displayName,
+                                            });
+                                            nav.close();
+                                        }}
+                                        aria-label={`Message ${c.displayName}`}
+                                        className="tap cell-press flex min-w-0 flex-1 items-center gap-3 pl-4 text-left"
                                     >
                                         <Avatar
                                             name={c.displayName}
                                             size={36}
                                             className="my-2"
                                         />
-                                        <span className="border-separator flex min-w-0 flex-1 items-center gap-2 border-b-[0.5px] py-2.5 pr-4 group-last/row:border-b-0">
+                                        <span className="border-separator flex min-w-0 flex-1 items-center gap-2 self-stretch border-b-[0.5px] py-2.5 pr-1 group-last/row:border-b-0">
                                             <span className="flex min-w-0 flex-1 flex-col">
                                                 <span
                                                     className="text-body truncate"
@@ -115,13 +158,29 @@ export function ContactsPage() {
                                                     {c.rawNumber || c.norm}
                                                 </span>
                                             </span>
-                                            <span className="text-caption-1 text-label-3 shrink-0">
+                                            <span className="text-caption-1 text-label-2 shrink-0">
                                                 {c.source === "web"
                                                     ? "Saved here"
                                                     : "From phone"}
                                             </span>
                                         </span>
                                     </button>
+                                    <span className="border-separator flex shrink-0 items-center border-b-[0.5px] pr-3 pl-1 group-last/row:border-b-0">
+                                        <IconButton
+                                            size="sm"
+                                            variant="plain"
+                                            tone="tint"
+                                            label={`Edit ${c.displayName}`}
+                                            icon={<Info />}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                nav.push({
+                                                    name: "contact-edit",
+                                                    contact: c,
+                                                });
+                                            }}
+                                        />
+                                    </span>
                                 </li>
                             ))}
                         </ul>
@@ -153,7 +212,7 @@ export function ContactEditPage({ contact }: { contact: Contact | null }) {
             <PageHeader
                 title={contact ? "Edit Contact" : "New Contact"}
                 trailing={
-                    <Button size="sm" disabled={!valid} loading={saving} onClick={save}>
+                    <Button size="bar" disabled={!valid} loading={saving} onClick={save}>
                         Done
                     </Button>
                 }

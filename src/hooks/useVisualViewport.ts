@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { isShortScreen } from "@/hooks/useMediaQuery";
 
 /**
  * Tracks the visual viewport (the part of the page left visible above the iOS
@@ -83,6 +84,23 @@ export function useVisualViewport(): void {
             root.style.removeProperty("--vvt");
             root.style.removeProperty("--kb");
             delete root.dataset.keyboard;
+        };
+    }, []);
+
+    // <html data-short> drives the `short:` variant (phone on its side).
+    useEffect(() => {
+        const root = document.documentElement;
+        const sync = () => root.toggleAttribute("data-short", isShortScreen());
+        const so = window.screen.orientation;
+        sync();
+        so?.addEventListener("change", sync);
+        window.addEventListener("orientationchange", sync);
+        window.addEventListener("resize", sync);
+        return () => {
+            so?.removeEventListener("change", sync);
+            window.removeEventListener("orientationchange", sync);
+            window.removeEventListener("resize", sync);
+            root.removeAttribute("data-short");
         };
     }, []);
 }

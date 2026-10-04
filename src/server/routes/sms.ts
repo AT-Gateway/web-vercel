@@ -26,13 +26,16 @@ export async function registerSmsRoutes(app: FastifyInstance, repo: ReturnType<t
     const limit = Math.floor(Math.min(Math.max(Number(q.limit ?? 300) || 300, 1), 1000));
     if (!threadId) return reply.code(400).send({ ok: false, error: 'Missing threadId' });
 
-    // Returns the newest `limit` messages (older than `before`, a ts_ms cursor, when given), ascending.
+    // Returns the newest `limit` messages (older than the `before` ts_ms + `beforeId`
+    // keyset cursor, when given), ascending.
     const before = Number(q.before);
+    const beforeId = typeof q.beforeId === 'string' && UUID_SHAPE_RE.test(q.beforeId) ? q.beforeId.toLowerCase() : null;
     const messages = await repo.listMessages(
       p.pairingId,
       threadId,
       limit,
-      Number.isFinite(before) && before > 0 ? Math.floor(before) : null
+      Number.isFinite(before) && before > 0 ? Math.floor(before) : null,
+      beforeId
     );
     return { ok: true, threadId, messages };
   });

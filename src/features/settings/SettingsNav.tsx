@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext } from "react";
+import React, { createContext, useContext, useEffect, useRef } from "react";
 import { ChevronLeft } from "lucide-react";
 import type { Contact } from "@/lib/api";
 import { SheetHeader } from "@/components/ios/Sheet";
@@ -41,6 +41,31 @@ export function useSettingsNav() {
     return useContext(SettingsNavContext);
 }
 
+/**
+ * A settings page title that takes focus when its page appears (pages remount
+ * on every push and pop), so screen readers announce the new page instead of
+ * losing focus with the button that navigated. Never takes focus from a field
+ * the page autofocused.
+ */
+export function PageTitle({ children }: { children: React.ReactNode }) {
+    const ref = useRef<HTMLSpanElement>(null);
+    useEffect(() => {
+        const active = document.activeElement;
+        if (
+            !active ||
+            active === document.body ||
+            active.getAttribute("role") === "dialog"
+        ) {
+            ref.current?.focus({ preventScroll: true });
+        }
+    }, []);
+    return (
+        <span ref={ref} tabIndex={-1} className="outline-none">
+            {children}
+        </span>
+    );
+}
+
 /** Pushed-page header: "‹ Settings" back button with the page title. */
 export function PageHeader({
     title,
@@ -52,7 +77,7 @@ export function PageHeader({
     const { pop, previousTitle } = useSettingsNav();
     return (
         <SheetHeader
-            title={title}
+            title={<PageTitle>{title}</PageTitle>}
             leading={
                 <button
                     type="button"

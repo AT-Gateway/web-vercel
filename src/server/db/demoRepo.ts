@@ -801,17 +801,29 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
       return useReal('tryInsertMessage', input);
     },
 
-    async listMessages(pairingId: string, threadIdOrPeer: string, limit: number, before?: number | null): Promise<MessageRow[]> {
+    async listMessages(
+      pairingId: string,
+      threadIdOrPeer: string,
+      limit: number,
+      before?: number | null,
+      beforeId?: string | null
+    ): Promise<MessageRow[]> {
       if (isDemoPairing(cfg, pairingId)) {
         const thread = threadIdOrPeer;
         return state.messages
           .filter((m) => messageMatchesThread(m, thread))
-          .filter((m) => before === null || before === undefined || m.ts < before)
-          .sort((a, b) => a.ts - b.ts)
+          .filter(
+            (m) =>
+              before === null ||
+              before === undefined ||
+              m.ts < before ||
+              (beforeId != null && m.ts === before && m.id < beforeId)
+          )
+          .sort((a, b) => a.ts - b.ts || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
           .slice(-limit)
           .map((m) => ({ ...m, peerName: contactName(m.peer) ?? m.peerName }));
       }
-      return useReal('listMessages', pairingId, threadIdOrPeer, limit, before ?? null);
+      return useReal('listMessages', pairingId, threadIdOrPeer, limit, before ?? null, beforeId ?? null);
     },
 
     async searchMessages(pairingId: string, query: string, limit: number): Promise<MessageRow[]> {

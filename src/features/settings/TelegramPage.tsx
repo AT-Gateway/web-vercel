@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Send } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Copy, Send, WifiOff } from "lucide-react";
 import {
     telegramCreateLinkCode,
     telegramSetAlerts,
@@ -12,6 +12,8 @@ import {
 } from "@/lib/api";
 import { formatCountdown, formatRelative, pluralize } from "@/lib/format";
 import { SheetBody } from "@/components/ios/Sheet";
+import { Button } from "@/components/ios/Button";
+import { ContentUnavailable } from "@/components/ios/ContentUnavailable";
 import { List, Row, Section } from "@/components/ios/List";
 import { Switch } from "@/components/ios/Switch";
 import { Spinner } from "@/components/ios/Spinner";
@@ -21,41 +23,65 @@ import { PageHeader } from "@/features/settings/SettingsNav";
 
 type LinkCode = { code: string; expiresAt: number; botDeepLink: string | null };
 
+/** While a link code is live, how often to look for the newly linked chat. */
+const LINK_POLL_MS = 4000;
+
 export function TelegramPage() {
     const { session } = useApp();
     const toast = useToast();
     const [status, setStatus] = useState<TelegramStatusRes | null>(null);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(false);
     const [busy, setBusy] = useState<string | null>(null);
     const [link, setLink] = useState<LinkCode | null>(null);
     const [now, setNow] = useState(() => Date.now());
 
-    const load = useCallback(async () => {
-        if (!session) return;
-        try {
-            setStatus(await telegramStatus(session.pairToken));
-        } catch (e) {
-            toast({
-                title: "Couldn't Load Telegram",
-                body: e instanceof Error ? e.message : undefined,
-                tone: "error",
-            });
-        } finally {
-            setLoading(false);
-        }
-    }, [session, toast]);
+    const statusRef = useRef(status);
+    statusRef.current = status;
+
+    /** `background`: a silent refresh (link polling) that never reports errors. */
+    const load = useCallback(
+        async (opts?: { background?: boolean }) => {
+            if (!session) return null;
+            try {
+                const next = await telegramStatus(session.pairToken);
+                setStatus(next);
+                setError(false);
+                return next;
+            } catch (e) {
+                if (opts?.background) return null;
+                if (statusRef.current) {
+                    toast({
+                        title: "Couldn't Load Telegram",
+                        body: e instanceof Error ? e.message : undefined,
+                        tone: "error",
+                    });
+                } else {
+                    setError(true);
+                }
+                return null;
+            } finally {
+                setLoading(false);
+            }
+        },
+        [session, toast]
+    );
 
     useEffect(() => {
         load();
     }, [load]);
+
+    const retry = () => {
+        setError(false);
+        setLoading(true);
+        void load();
+    };
 
     useEffect(() => {
         if (!link) return;
         const t = window.setInterval(() => setNow(Date.now()), 1000);
         return () => window.clearInterval(t);
     }, [link]);
-
-    if (!session) return null;
 
     const run = async (key: string, fn: () => Promise<void>) => {
         setBusy(key);
@@ -78,6 +104,46 @@ export function TelegramPage() {
     const subs = status?.subscribers ?? [];
     const active = subs.filter((s) => s.enabled).length;
     const liveLink = link && link.expiresAt > now ? link : null;
+    const linkCode = liveLink?.code ?? null;
+
+    // While a link code is up, watch for the chat that sends it to the bot.
+    useEffect(() => {
+        if (!linkCode) return;
+        const before = statusRef.current?.subscribers?.length ?? 0;
+        let cancelled = false;
+        const check = async () => {
+            const next = await load({ background: true });
+            if (cancelled || !next) return;
+            if ((next.subscribers?.length ?? 0) > before) {
+                cancelled = true;
+                toast({ title: "Telegram Linked", tone: "success" });
+                setLink(null);
+            }
+        };
+        const timer = window.setInterval(check, LINK_POLL_MS);
+        const onVisible = () => {
+            if (document.visibilityState === "visible") void check();
+        };
+        document.addEventListener("visibilitychange", onVisible);
+        window.addEventListener("focus", onVisible);
+        return () => {
+            cancelled = true;
+            window.clearInterval(timer);
+            document.removeEventListener("visibilitychange", onVisible);
+            window.removeEventListener("focus", onVisible);
+        };
+    }, [linkCode, load, toast]);
+
+    if (!session) return null;
+
+    const copyLinkCommand = async (code: string) => {
+        try {
+            await navigator.clipboard.writeText(`/link ${code}`);
+            toast({ title: "Command Copied", tone: "success" });
+        } catch {
+            toast({ title: "Couldn't Copy", tone: "error" });
+        }
+    };
 
     return (
         <>
@@ -101,6 +167,18 @@ export function TelegramPage() {
                     <div className="flex justify-center py-10">
                         <Spinner />
                     </div>
+                ) : error && !status ? (
+                    <ContentUnavailable
+                        className="pt-4"
+                        icon={<WifiOff />}
+                        title="Can't Load Telegram"
+                        description="Check your connection."
+                        actions={
+                            <Button variant="gray" onClick={retry}>
+                                Try Again
+                            </Button>
+                        }
+                    />
                 ) : (
                     <List>
                         <Section
@@ -203,19 +281,36 @@ export function TelegramPage() {
                         ) : null}
 
                         {liveLink ? (
-                            <Section header="Link a Chat">
+                            <Section
+                                header="Link a Chat"
+                                footer={
+                                    liveLink.botDeepLink
+                                        ? "Tap Start in the bot to link this chat."
+                                        : undefined
+                                }
+                            >
                                 <div className="flex flex-col items-center px-4 pt-4 pb-4 text-center">
-                                    <span className="font-mono text-[2.25rem] leading-none font-semibold tracking-[0.18em]">
+                                    <span className="font-mono text-[2.25rem] leading-none font-semibold tracking-[0.18em] select-text [-webkit-touch-callout:default]">
                                         {liveLink.code}
                                     </span>
                                     <p className="text-subhead text-label-2 mt-3">
                                         Send{" "}
-                                        <span className="text-label font-mono font-semibold">
+                                        <span className="text-label font-mono font-semibold select-text [-webkit-touch-callout:default]">
                                             /link {liveLink.code}
                                         </span>{" "}
                                         to the bot within{" "}
                                         {formatCountdown(liveLink.expiresAt - now)}.
                                     </p>
+                                    <Button
+                                        variant="tinted"
+                                        size="sm"
+                                        className="mt-3"
+                                        icon={<Copy className="size-4" />}
+                                        aria-label={`Copy /link ${liveLink.code}`}
+                                        onClick={() => copyLinkCommand(liveLink.code)}
+                                    >
+                                        Copy
+                                    </Button>
                                     {liveLink.botDeepLink ? (
                                         <a
                                             href={liveLink.botDeepLink}

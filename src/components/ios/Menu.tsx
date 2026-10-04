@@ -119,7 +119,9 @@ function MenuList({
                             }
                             aria-checked={item.checked}
                             disabled={item.disabled}
-                            onMouseDown={keepFocus ? (e) => e.preventDefault() : undefined}
+                            onMouseDown={
+                                keepFocus ? (e) => e.preventDefault() : undefined
+                            }
                             onClick={() => {
                                 onClose();
                                 // Let the menu close before running actions that open other UI.
@@ -215,7 +217,6 @@ export function Menu({
         }
     );
     // Read at render time: the opening click/keypress has already set it.
-    // eslint-disable-next-line react-hooks/refs
     const autoFocusFirst = !keepFocus || openedBy.current === "keyboard";
 
     return (

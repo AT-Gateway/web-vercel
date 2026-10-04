@@ -17,7 +17,8 @@
 @custom-variant split (&:where([data-layout="split"] *));
 
 /* Short landscape (phone on its side). */
-@custom-variant short (@media (max-height: 500px) and (orientation: landscape));
+/* Phone on its side; <html data-short> is set by useVisualViewport (see isShortScreen). */
+@custom-variant short (&:where([data-short], [data-short] *));
 
 /*
  * Design system — modelled on iOS 26 / Apple HIG.
@@ -407,12 +408,7 @@
     box-shadow: inset 0 -0.5px 0 var(--sys-separator);
 }
 
-/* Scroll-edge effect: plain blur where content passes under a bar (no color fade). */
-@utility edge-top {
-    -webkit-backdrop-filter: blur(12px);
-    backdrop-filter: blur(12px);
-}
-
+/* Scroll-edge effect: plain blur where content passes under the composer (no color fade). */
 @utility edge-bottom {
     -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
@@ -605,23 +601,16 @@ body:has([data-vaul-drawer]) {
 /* The scaled-back page behind a sheet doesn't need live blur (costly, invisible). */
 body:has([data-vaul-drawer])
     [data-vaul-drawer-wrapper]
-    :is(.glass, .glass-bar, .edge-top, .edge-bottom) {
+    :is(.glass, .glass-bar, .edge-bottom) {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
 }
 
 /* Scrolled nav bar (NavBar sets data-scrolled): the glass-bar underneath already
-   diffuses, so floating glass controls and the scroll-edge blur can drop theirs. */
+   diffuses, so floating glass controls can drop their own blur. */
 header[data-scrolled] .glass {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
-}
-
-header[data-scrolled] .edge-top {
-    visibility: hidden;
-    transition:
-        opacity 300ms,
-        visibility 0s 300ms;
 }
 
 /* UISlider (src/components/ios/Slider.tsx) */

@@ -1,10 +1,21 @@
 "use client";
 
-import React, { memo, useState } from "react";
-import { Check, CircleAlert, Copy, KeyRound, RotateCw } from "lucide-react";
+import React, { memo, useMemo, useRef, useState } from "react";
+import {
+    Check,
+    CircleAlert,
+    Copy,
+    ExternalLink,
+    KeyRound,
+    Link2,
+    RotateCw,
+    Trash2,
+} from "lucide-react";
 import type { Message } from "@/lib/api";
 import { formatDateTime, formatTime } from "@/lib/format";
+import { hasArabicScript } from "@/lib/text";
 import { cn } from "@/lib/utils";
+import type { MenuItem, MenuSections } from "@/components/ios/Menu";
 import { useContextMenu } from "@/components/ios/Menu";
 import { useToast } from "@/components/ios/Toast";
 import {
@@ -48,22 +59,33 @@ async function copyText(text: string) {
     }
 }
 
+/** Incoming messages from numbers that aren't saved contacts. */
+function fromUnknownSender(m: Message): boolean {
+    return m.direction === "in" && !m.peerName;
+}
+
 function BubbleBody({
     message: m,
     tail,
     jumbo,
+    onLinkPress,
 }: {
     message: Message;
     tail: boolean;
     jumbo: boolean;
+    onLinkPress: (href: string, fromUnknown: boolean) => void;
 }) {
     const out = m.direction === "out";
     const failed = m.status === "failed";
     const text = m.bodyIsEncrypted ? "🔒 Encrypted message" : m.body;
+    const lang = hasArabicScript(text) ? "fa" : undefined;
 
     if (jumbo) {
         return (
-            <div dir="auto" className="px-1 text-[3rem] leading-[1.15] tracking-normal">
+            <div
+                lang={lang}
+                className="px-1 text-start text-[3rem] leading-[1.15] tracking-normal [unicode-bidi:plaintext]"
+            >
                 {text}
             </div>
         );
@@ -72,7 +94,7 @@ function BubbleBody({
     return (
         <div
             className={cn(
-                "text-body relative w-fit max-w-full rounded-[18px] px-3 py-[7px] break-words whitespace-pre-wrap",
+                "text-body relative w-fit max-w-full rounded-[18px] px-3 py-[7px] wrap-anywhere whitespace-pre-wrap",
                 out
                     ? "bg-bubble-out text-bubble-out-label"
                     : "bg-bubble-in text-bubble-in-label",
@@ -81,10 +103,11 @@ function BubbleBody({
                 tail && (out ? "rounded-br-[5px]" : "rounded-bl-[5px]")
             )}
         >
+            {/* plaintext bidi: every line picks its own direction and alignment. */}
             <span
-                dir="auto"
+                lang={lang}
                 className={cn(
-                    "block text-start",
+                    "block text-start [unicode-bidi:plaintext]",
                     out ? "text-bubble-out-label" : "text-bubble-in-label"
                 )}
             >
@@ -95,7 +118,13 @@ function BubbleBody({
                             href={p.href}
                             target="_blank"
                             rel="noreferrer noopener"
-                            onClick={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (fromUnknownSender(m)) {
+                                    e.preventDefault();
+                                    onLinkPress(p.href!, true);
+                                }
+                            }}
                             className="underline decoration-1 underline-offset-2"
                         >
                             {p.text}
@@ -115,18 +144,25 @@ export const MessageBubble = memo(function MessageBubble({
     first,
     last,
     showStatus,
-    revealOffset,
-    onRetry,
+    gatewayStale,
     animate,
+    onRetry,
+    onDiscard,
+    onLinkPress,
+    onCopyCode,
 }: {
     message: Message;
     first: boolean;
     last: boolean;
     showStatus: boolean;
-    /** Horizontal drag distance for the swipe-to-reveal timestamps gesture. */
-    revealOffset: number;
-    onRetry: (m: Message) => void;
+    /** The gateway hasn't polled for a while: queued rows read "Waiting for Phone…". */
+    gatewayStale: boolean;
     animate: boolean;
+    onRetry: (m: Message, opts?: { slot?: 0 | 1 }) => void;
+    onDiscard: (m: Message) => void;
+    onLinkPress: (href: string, fromUnknown: boolean) => void;
+    /** Copies a verification code (with its own toast). */
+    onCopyCode: (code: string) => void;
 }) {
     const toast = useToast();
     const out = m.direction === "out";
@@ -141,7 +177,87 @@ export const MessageBubble = memo(function MessageBubble({
           : m.simSlotIndex === 0
             ? "SIM 1"
             : null;
-    const status = statusText(m);
+    const status = statusText(m, gatewayStale);
+    const links = useMemo(
+        () => (m.bodyIsEncrypted ? [] : linkify(m.body).filter((p) => p.href)),
+        [m.body, m.bodyIsEncrypted]
+    );
+    // The link under the finger when the long-press started, if any.
+    const pressedHref = useRef<string | null>(null);
+
+    const sections: MenuSections = [];
+    if (failed) {
+        const retry: MenuItem[] = [
+            {
+                label: "Try Again",
+                icon: <RotateCw />,
+                keyAction: true,
+                onSelect: () => onRetry(m),
+            },
+        ];
+        // A failure the phone reported: offer the other SIM too. Local (upload)
+        // failures resend unchanged, since the original may already be queued.
+        if (!m.local) {
+            const other: 0 | 1 = m.simSlotIndex === 1 ? 0 : 1;
+            retry.push({
+                label: `Try Again from SIM ${other + 1}`,
+                icon: <RotateCw />,
+                onSelect: () => onRetry(m, { slot: other }),
+            });
+        }
+        sections.push(retry);
+    }
+    sections.push([
+        ...(code
+            ? [
+                  {
+                      label: `Copy Code ${code}`,
+                      icon: <KeyRound />,
+                      keyAction: true,
+                      onSelect: () => onCopyCode(code),
+                  },
+              ]
+            : []),
+        {
+            label: "Copy",
+            icon: <Copy />,
+            onSelect: () => {
+                void copyText(m.body);
+                toast({ title: "Copied", tone: "success" });
+            },
+        },
+    ]);
+    if (links.length) {
+        const pressed = pressedHref.current;
+        const href =
+            (pressed && links.find((l) => l.href === pressed)?.href) || links[0].href!;
+        sections.push([
+            {
+                label: "Open Link",
+                icon: <ExternalLink />,
+                keyAction: true,
+                onSelect: () => onLinkPress(href, fromUnknownSender(m)),
+            },
+            {
+                label: "Copy Link",
+                icon: <Link2 />,
+                onSelect: () => {
+                    void copyText(href);
+                    toast({ title: "Link Copied", tone: "success" });
+                },
+            },
+        ]);
+    }
+    if (failed || m.waiting) {
+        sections.push([
+            {
+                label: "Delete",
+                icon: <Trash2 />,
+                destructive: true,
+                onSelect: () => onDiscard(m),
+            },
+        ]);
+    }
 
     const menu = useContextMenu({
         label: "Message actions",
@@ -157,49 +273,30 @@ export const MessageBubble = memo(function MessageBubble({
                 )}
             >
                 <div className="max-w-full drop-shadow-[0_10px_30px_rgb(0_0_0/0.18)]">
-                    <BubbleBody message={m} tail={false} jumbo={jumbo} />
+                    <BubbleBody
+                        message={m}
+                        tail={false}
+                        jumbo={jumbo}
+                        onLinkPress={onLinkPress}
+                    />
                 </div>
             </div>
         ),
-        sections: [
-            [
-                ...(code
-                    ? [
-                          {
-                              label: `Copy Code ${code}`,
-                              icon: <KeyRound />,
-                              keyAction: true,
-                              onSelect: () => {
-                                  void copyText(code);
-                                  toast({
-                                      title: "Code Copied",
-                                      tone: "success" as const,
-                                  });
-                              },
-                          },
-                      ]
-                    : []),
-                {
-                    label: "Copy",
-                    icon: <Copy />,
-                    onSelect: () => {
-                        void copyText(m.body);
-                        toast({ title: "Copied", tone: "success" });
-                    },
-                },
-                ...(failed
-                    ? [
-                          {
-                              label: "Try Again",
-                              icon: <RotateCw />,
-                              keyAction: true,
-                              onSelect: () => onRetry(m),
-                          },
-                      ]
-                    : []),
-            ],
-        ],
+        sections,
     });
+
+    const triggerProps = {
+        ...menu.triggerProps,
+        onPointerDown: (e: React.PointerEvent) => {
+            pressedHref.current =
+                (e.target as Element).closest("a")?.getAttribute("href") ?? null;
+            menu.triggerProps.onPointerDown(e);
+        },
+        onKeyDown: (e: React.KeyboardEvent) => {
+            pressedHref.current = null;
+            menu.triggerProps.onKeyDown(e);
+        },
+    };
 
     return (
         <div
@@ -213,22 +310,13 @@ export const MessageBubble = memo(function MessageBubble({
         >
             <div
                 className={cn(
-                    "flex max-w-[78%] flex-col md:max-w-[min(70%,560px)]",
+                    "split:max-w-[min(70%,560px)] flex max-w-[78%] flex-col",
                     out ? "items-end" : "items-start"
                 )}
-                style={{
-                    transform:
-                        out && revealOffset
-                            ? `translate3d(${-revealOffset}px,0,0)`
-                            : undefined,
-                    transition: revealOffset
-                        ? "none"
-                        : "transform 300ms var(--motion-ios)",
-                }}
             >
-                <div className="flex items-center gap-2">
+                <div className="flex max-w-full min-w-0 items-center gap-2">
                     <div
-                        {...menu.triggerProps}
+                        {...triggerProps}
                         tabIndex={0}
                         role="article"
                         aria-label={`${out ? "You" : m.peerName || m.peer}, ${formatTime(m.ts)}${
@@ -236,17 +324,23 @@ export const MessageBubble = memo(function MessageBubble({
                         }: ${m.body}`}
                         title={formatDateTime(m.ts)}
                         className={cn(
-                            "rounded-[18px] outline-offset-2 select-none [-webkit-touch-callout:none]",
+                            "min-w-0 rounded-[18px] outline-offset-2 select-none [-webkit-touch-callout:none]",
                             menu.isOpen && "opacity-0"
                         )}
                     >
-                        <BubbleBody message={m} tail={last} jumbo={jumbo} />
+                        <BubbleBody
+                            message={m}
+                            tail={last}
+                            jumbo={jumbo}
+                            onLinkPress={onLinkPress}
+                        />
                     </div>
                     {failed ? (
                         <button
                             type="button"
-                            aria-label="Not delivered. Try again"
-                            onClick={() => onRetry(m)}
+                            aria-label="Not delivered. Message options"
+                            aria-haspopup="menu"
+                            onClick={menu.open}
                             className="tap text-red -mr-2 flex size-11 shrink-0 items-center justify-center"
                         >
                             <CircleAlert
@@ -256,7 +350,7 @@ export const MessageBubble = memo(function MessageBubble({
                         </button>
                     ) : null}
                 </div>
-                {code ? <CodeChip code={code} /> : null}
+                {code ? <CodeChip code={code} onCopy={onCopyCode} /> : null}
                 {showStatus && out ? (
                     <div
                         className={cn(
@@ -267,58 +361,45 @@ export const MessageBubble = memo(function MessageBubble({
                         {failed ? (
                             <button
                                 type="button"
-                                onClick={() => onRetry(m)}
+                                aria-haspopup="menu"
+                                onClick={menu.open}
                                 className="tap underline-offset-2 hover:underline"
                             >
-                                Not Delivered · Try Again
+                                Not Delivered
                             </button>
                         ) : (
                             <>
                                 {status}
                                 {sim ? (
-                                    <span className="text-label-3"> · {sim}</span>
+                                    <span className="text-label-2"> · {sim}</span>
                                 ) : null}
                             </>
                         )}
                     </div>
                 ) : null}
             </div>
-
-            {/*/!* Revealed by dragging the thread left, like iOS Messages. *!/*/}
-            {/*<span*/}
-            {/*    aria-hidden*/}
-            {/*    className="text-caption-1 text-label-2 pointer-events-none absolute top-1/2 right-0 w-[68px] -translate-y-1/2 pr-4 text-right tabular-nums"*/}
-            {/*    style={{*/}
-            {/*        transform: `translate3d(${68 - revealOffset}px,-50%,0)`,*/}
-            {/*        transition: revealOffset*/}
-            {/*            ? "none"*/}
-            {/*            : "transform 300ms var(--motion-ios)",*/}
-            {/*    }}*/}
-            {/*>*/}
-            {/*    {formatTime(m.ts)}*/}
-            {/*</span>*/}
             {menu.node}
         </div>
     );
 });
 
 /** One-tap "Copy 482913" button under messages that carry a verification code. */
-function CodeChip({ code }: { code: string }) {
-    const toast = useToast();
+function CodeChip({ code, onCopy }: { code: string; onCopy: (code: string) => void }) {
     const [copied, setCopied] = useState(false);
     return (
         <button
             type="button"
             aria-label={copied ? `Code ${code} copied` : `Copy code ${code}`}
-            onClick={async (e) => {
+            onClick={(e) => {
                 e.stopPropagation();
-                await copyText(code);
+                onCopy(code);
                 setCopied(true);
-                toast({ title: "Code Copied", body: code, tone: "success" });
                 window.setTimeout(() => setCopied(false), 1800);
             }}
             className={cn(
-                "tap mt-1.5 ml-1 inline-flex min-h-9 items-center gap-1.5 rounded-full px-3.5",
+                "tap relative mt-1.5 ml-1 inline-flex min-h-9 items-center gap-1.5 rounded-full px-3.5",
+                // 44pt hit area around the 36pt chip.
+                "before:absolute before:inset-x-0 before:-inset-y-1 before:content-['']",
                 "text-subhead font-semibold transition-colors duration-200 active:scale-[0.97]",
                 copied ? "bg-green/15 text-green" : "bg-tint/12 text-tint"
             )}

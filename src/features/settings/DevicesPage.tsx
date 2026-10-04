@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Globe, Send, Smartphone } from "lucide-react";
+import { Globe, Send, Smartphone, WifiOff } from "lucide-react";
 import { type Device, listDevices, revokeDevice } from "@/lib/api";
 import { formatDateTime, formatRelative } from "@/lib/format";
 import { getOrCreateDeviceId } from "@/lib/storage";
@@ -9,6 +9,7 @@ import { SheetBody } from "@/components/ios/Sheet";
 import { Button } from "@/components/ios/Button";
 import { IconTile } from "@/components/ios/List";
 import { Spinner } from "@/components/ios/Spinner";
+import { ContentUnavailable } from "@/components/ios/ContentUnavailable";
 import { useConfirm } from "@/components/ios/ConfirmDialog";
 import { useToast } from "@/components/ios/Toast";
 import { useApp } from "@/features/app/AppProvider";
@@ -39,6 +40,7 @@ export function DevicesPage() {
     const toast = useToast();
     const [confirmNode, confirm] = useConfirm();
     const [devices, setDevices] = useState<Device[] | null>(null);
+    const [error, setError] = useState(false);
     const [removing, setRemoving] = useState<string | null>(null);
     const thisDevice = getOrCreateDeviceId();
 
@@ -47,10 +49,18 @@ export function DevicesPage() {
         try {
             const r = await listDevices(session.pairToken);
             setDevices(r.devices ?? []);
+            setError(false);
         } catch {
-            setDevices([]);
+            // Keep a list that already loaded; only an empty page shows the error.
+            setError(true);
         }
     }, [session]);
+
+    const retry = () => {
+        setError(false);
+        setDevices(null);
+        void load();
+    };
 
     useEffect(() => {
         load();
@@ -75,6 +85,7 @@ export function DevicesPage() {
         setRemoving(d.deviceId);
         try {
             await revokeDevice(session.pairToken, d.deviceId);
+            setDevices((prev) => prev?.filter((x) => x.deviceId !== d.deviceId) ?? prev);
             await load();
             toast({ title: "Device Removed", tone: "success" });
         } catch (e) {
@@ -92,7 +103,19 @@ export function DevicesPage() {
         <>
             <PageHeader title="Devices" />
             <SheetBody className="pt-2">
-                {devices === null ? (
+                {error && devices === null ? (
+                    <ContentUnavailable
+                        className="pt-16"
+                        icon={<WifiOff />}
+                        title="Can't Load Devices"
+                        description="Check your connection."
+                        actions={
+                            <Button variant="gray" onClick={retry}>
+                                Try Again
+                            </Button>
+                        }
+                    />
+                ) : devices === null ? (
                     <div className="flex justify-center py-10">
                         <Spinner />
                     </div>

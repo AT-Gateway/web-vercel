@@ -46,8 +46,13 @@ export function buildThreadItems(messages: Message[]): ThreadItem[] {
             key: m.id,
             message: m,
             first: !continuesPrev,
-            last: !continuesNext || m.status === "failed" || m.id === lastOutgoingId,
-            showStatus: m.id === lastOutgoingId || m.status === "failed",
+            last:
+                !continuesNext ||
+                m.status === "failed" ||
+                Boolean(m.waiting) ||
+                m.id === lastOutgoingId,
+            showStatus:
+                m.id === lastOutgoingId || m.status === "failed" || Boolean(m.waiting),
         });
     });
 
@@ -71,10 +76,18 @@ export function isJumboEmoji(text: string): boolean {
 
 export { extractCode } from "@/lib/otp";
 
-export function statusText(m: Message): string {
+/**
+ * Delivery status under an outgoing bubble. `gatewayStale`: the Android gateway
+ * hasn't polled its outbox for a while, so queued server rows aren't moving.
+ */
+export function statusText(m: Message, gatewayStale = false): string {
     if (m.direction !== "out") return "";
     if (m.status === "failed") return "Not Delivered";
-    if (m.status === "queued") return "Sending…";
+    if (m.waiting) return "Waiting for Network";
+    if (m.status === "queued") {
+        if (m.local) return "Sending…";
+        return gatewayStale ? "Waiting for Phone…" : "Sending…";
+    }
     if (m.deliveredAt) return "Delivered";
     return "Sent";
 }

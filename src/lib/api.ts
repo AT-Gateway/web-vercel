@@ -290,14 +290,14 @@ export async function listConversations(
 }
 
 /**
- * The newest `limit` messages of a thread (older than `before`, a ts in ms,
- * when given), in ascending order.
+ * The newest `limit` messages of a thread (older than the `before` ts in ms +
+ * `beforeId` keyset cursor, when given), in ascending order.
  */
 export async function listMessages(
     pairToken: string,
     peer: string,
     limit = 300,
-    opts: { before?: number; signal?: AbortSignal } = {}
+    opts: { before?: number; beforeId?: string; signal?: AbortSignal } = {}
 ): Promise<ListMessagesRes> {
     const qs = new URLSearchParams({
         // Server accepts `peer` for backwards compatibility but prefers `threadId`.
@@ -306,6 +306,7 @@ export async function listMessages(
     });
     if (opts.before != null && Number.isFinite(opts.before)) {
         qs.set("before", String(Math.floor(opts.before)));
+        if (opts.beforeId) qs.set("beforeId", opts.beforeId);
     }
     return apiFetch(`/api/sms/messages?${qs.toString()}`, {
         pairToken,

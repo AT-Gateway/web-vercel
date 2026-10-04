@@ -166,7 +166,9 @@ export function loadDrafts(): Record<string, string> {
 }
 
 export function saveDrafts(d: Record<string, string>) {
-    const entries = Object.entries(d).filter(([, text]) => typeof text === "string" && text);
+    const entries = Object.entries(d).filter(
+        ([, text]) => typeof text === "string" && text
+    );
     if (entries.length === 0) remove(DRAFTS_KEY);
     else writeJson(DRAFTS_KEY, Object.fromEntries(entries));
 }

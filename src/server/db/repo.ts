@@ -1369,13 +1369,16 @@ export function createRepo(pool: Pool) {
 
   /**
    * Returns the NEWEST `limit` messages of a thread (optionally only those older than
-   * `before`, a ts_ms cursor for "load earlier"), in ascending order.
+   * the `(before, beforeId)` keyset cursor for "load earlier"), in ascending order.
+   * The id tiebreak keeps rows that share a timestamp from being skipped at a
+   * page boundary; `beforeId` must be UUID-shaped (or null).
    */
   async function listMessages(
     pairingId: string,
     threadIdOrPeer: string,
     limit: number,
-    before?: number | null
+    before?: number | null,
+    beforeId?: string | null
   ): Promise<MessageRow[]> {
     const r = await pool.query(
       `
@@ -1405,13 +1408,17 @@ export function createRepo(pool: Pool) {
           OR (m.peer_norm IS NOT NULL AND m.peer_norm = $2)
           OR (m.peer_tail IS NOT NULL AND m.peer_tail = $2)
         )
-        AND ($4::bigint IS NULL OR m.ts_ms < $4)
-      ORDER BY m.ts_ms DESC
+        AND (
+          $4::bigint IS NULL
+          OR m.ts_ms < $4
+          OR ($5::uuid IS NOT NULL AND m.ts_ms = $4 AND m.id < $5::uuid)
+        )
+      ORDER BY m.ts_ms DESC, m.id DESC
       LIMIT $3
       ) t
-      ORDER BY t.ts_ms ASC
+      ORDER BY t.ts_ms ASC, t.id ASC
       `,
-      [pairingId, threadIdOrPeer, limit, before ?? null]
+      [pairingId, threadIdOrPeer, limit, before ?? null, before != null ? beforeId ?? null : null]
     );
 
     return r.rows.map((row: any) => ({
