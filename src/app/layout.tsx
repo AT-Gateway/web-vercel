@@ -43,7 +43,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <head>
                 {/* Apply the saved appearance before first paint to avoid a flash. */}
                 <script dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOT_SCRIPT }} />
-                <meta name="mobile-web-app-capable" content="yes" />
+                {/* Next emits only the generic mobile-web-app-capable tag for appleWebApp. */}
+                <meta name="apple-mobile-web-app-capable" content="yes" />
             </head>
             <body>
                 <ServiceWorkerRegister />

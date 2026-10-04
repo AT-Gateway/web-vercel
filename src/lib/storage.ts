@@ -3,12 +3,17 @@
  * blocked storage throw on access, so every read/write is guarded.
  */
 
+import type { Conversation, Message } from "@/lib/api";
+
 const PAIR_TOKEN_KEYS = ["pairToken", "PAIR_TOKEN", "pair_token", "pair_token_v1"];
 const DEVICE_ID_KEY = "pwaDeviceId";
 const SIM_SLOT_KEY = "simSlotIndex";
 const APPEARANCE_KEY = "appearance";
 const GLASS_TINT_KEY = "glassTint";
 const SESSION_KEY = "session";
+const DRAFTS_KEY = "drafts";
+const INBOX_PREFIX = "inbox:";
+const FLAG_PREFIX = "flag:";
 
 /** Liquid Glass transparency: 0 = Ultra Clear, 1 = Fully Tinted. */
 export const DEFAULT_GLASS_TINT = 0.45;
@@ -130,4 +135,91 @@ export function saveSession(s: StoredSession) {
 
 export function clearSession() {
     remove(SESSION_KEY);
+}
+
+function readJson<T>(key: string): T | null {
+    try {
+        const raw = read(key);
+        return raw ? (JSON.parse(raw) as T) : null;
+    } catch {
+        return null;
+    }
+}
+
+function writeJson(key: string, value: unknown) {
+    try {
+        write(key, JSON.stringify(value));
+    } catch {
+        // Not serializable or storage full; skip.
+    }
+}
+
+/** Unsent composer text per thread id, so drafts survive reloads and PWA eviction. */
+export function loadDrafts(): Record<string, string> {
+    const v = readJson<unknown>(DRAFTS_KEY);
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    const out: Record<string, string> = {};
+    for (const [k, text] of Object.entries(v as Record<string, unknown>)) {
+        if (typeof text === "string" && text) out[k] = text;
+    }
+    return out;
+}
+
+export function saveDrafts(d: Record<string, string>) {
+    const entries = Object.entries(d).filter(([, text]) => typeof text === "string" && text);
+    if (entries.length === 0) remove(DRAFTS_KEY);
+    else writeJson(DRAFTS_KEY, Object.fromEntries(entries));
+}
+
+export function clearDrafts() {
+    remove(DRAFTS_KEY);
+}
+
+/** Last loaded inbox, shown instantly on launch before the network answers. */
+export type CachedInbox = {
+    conversations: Conversation[];
+    threads: Record<string, Message[]>;
+};
+
+export function loadCachedInbox(pairingId: string): CachedInbox | null {
+    if (!pairingId) return null;
+    const v = readJson<Partial<CachedInbox>>(INBOX_PREFIX + pairingId);
+    if (!v || !Array.isArray(v.conversations)) return null;
+    const threads: Record<string, Message[]> = {};
+    if (v.threads && typeof v.threads === "object") {
+        for (const [tid, list] of Object.entries(v.threads)) {
+            if (Array.isArray(list)) threads[tid] = list;
+        }
+    }
+    return { conversations: v.conversations, threads };
+}
+
+export function saveCachedInbox(pairingId: string, data: CachedInbox) {
+    if (!pairingId) return;
+    writeJson(INBOX_PREFIX + pairingId, data);
+}
+
+/** Removes every cached inbox (they hold SMS bodies and verification codes). */
+export function clearCachedInbox() {
+    try {
+        const ls = window.localStorage;
+        const keys: string[] = [];
+        for (let i = 0; i < ls.length; i++) {
+            const k = ls.key(i);
+            if (k && k.startsWith(INBOX_PREFIX)) keys.push(k);
+        }
+        keys.forEach((k) => ls.removeItem(k));
+    } catch {
+        // ignore
+    }
+}
+
+/** Simple persisted booleans, e.g. "pushPromptDismissed". */
+export function loadFlag(key: string): boolean {
+    return read(FLAG_PREFIX + key) === "1";
+}
+
+export function saveFlag(key: string, v: boolean) {
+    if (v) write(FLAG_PREFIX + key, "1");
+    else remove(FLAG_PREFIX + key);
 }

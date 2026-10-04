@@ -4,6 +4,7 @@ import React from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
 import { useIsCompact } from "@/hooks/useMediaQuery";
+import { useBackDismiss } from "@/hooks/useBackDismiss";
 
 export type ConfirmOptions = {
     title: string;
@@ -30,6 +31,7 @@ export function ConfirmDialog({
     onConfirm: () => void;
 }) {
     const compact = useIsCompact();
+    useBackDismiss(open, () => onOpenChange(false));
 
     const confirm = () => {
         // Confirm first: useConfirm resolves on the first call it receives.
@@ -131,24 +133,49 @@ export function ConfirmDialog({
     );
 }
 
-/** Imperative helper: `const [dialog, confirm] = useConfirm(); await confirm({...})`. */
+type PendingConfirm = ConfirmOptions & { resolve: (v: boolean) => void };
+
+/**
+ * Imperative helper: `const [dialog, confirm, cancel] = useConfirm(); await confirm({...})`.
+ *
+ * `cancel()` resolves a pending confirm as `false` and removes the dialog
+ * (call it when the owning screen closes). Each promise resolves exactly once;
+ * asking again while one is pending resolves the old one as `false`.
+ */
 export function useConfirm(): [
     React.ReactNode,
     (opts: ConfirmOptions) => Promise<boolean>,
+    () => void,
 ] {
-    const [state, setState] = React.useState<
-        (ConfirmOptions & { resolve: (v: boolean) => void }) | null
-    >(null);
+    const [state, setState] = React.useState<PendingConfirm | null>(null);
     const [open, setOpen] = React.useState(false);
+    // Mirrors `state`, updated synchronously so ask/cancel never see a stale one.
+    const stateRef = React.useRef<PendingConfirm | null>(null);
 
     const ask = React.useCallback(
         (opts: ConfirmOptions) =>
-            new Promise<boolean>((resolve) => {
-                setState({ ...opts, resolve });
+            new Promise<boolean>((settle) => {
+                stateRef.current?.resolve(false);
+                let done = false;
+                const resolve = (v: boolean) => {
+                    if (done) return;
+                    done = true;
+                    settle(v);
+                };
+                const next = { ...opts, resolve };
+                stateRef.current = next;
+                setState(next);
                 setOpen(true);
             }),
         []
     );
+
+    const cancel = React.useCallback(() => {
+        stateRef.current?.resolve(false);
+        stateRef.current = null;
+        setOpen(false);
+        setState(null);
+    }, []);
 
     const node = state ? (
         <ConfirmDialog
@@ -165,5 +192,5 @@ export function useConfirm(): [
         />
     ) : null;
 
-    return [node, ask];
+    return [node, ask, cancel];
 }

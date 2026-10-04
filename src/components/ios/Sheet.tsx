@@ -1,10 +1,11 @@
 "use client";
 
-import React, { createContext, useContext } from "react";
+import React, { createContext, useContext, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Drawer } from "vaul";
 import { cn } from "@/lib/utils";
 import { useIsCompact } from "@/hooks/useMediaQuery";
+import { useBackDismiss } from "@/hooks/useBackDismiss";
 
 type SheetKind = "drawer" | "dialog";
 const SheetKindContext = createContext<SheetKind>("dialog");
@@ -18,6 +19,11 @@ type SheetProps = {
     description?: string;
     children: React.ReactNode;
     className?: string;
+    /**
+     * Android system Back. Defaults to closing the sheet; set it to handle Back
+     * inside the sheet first (e.g. pop a Settings page).
+     */
+    onBack?: () => void;
 };
 
 /**
@@ -31,8 +37,18 @@ export function Sheet({
     description,
     children,
     className,
+    onBack,
 }: SheetProps) {
-    const compact = useIsCompact();
+    useBackDismiss(open, () => (onBack ?? (() => onOpenChange(false)))());
+
+    // Freeze the container kind while open: switching between the vaul drawer
+    // and the Radix dialog mid-presentation (rotation, split resize) would
+    // remount the content and lose its state. `null` = follow the live value
+    // (a sheet that mounts open follows it until it first closes).
+    const compactNow = useIsCompact();
+    const [frozen, setFrozen] = useState<boolean | null>(open ? null : compactNow);
+    if (!open && frozen !== compactNow) setFrozen(compactNow);
+    const compact = frozen ?? compactNow;
 
     if (compact) {
         return (
@@ -49,13 +65,16 @@ export function Sheet({
                         <Drawer.Content
                             aria-describedby={undefined}
                             className={cn(
-                                "elevated bg-grouped fixed inset-x-0 bottom-0 z-50 flex flex-col overflow-hidden rounded-t-[38px] outline-none",
+                                "elevated bg-grouped px-safe fixed inset-x-0 bottom-0 z-50 flex flex-col overflow-visible rounded-t-[38px] outline-none",
                                 "shadow-[0_-10px_40px_rgb(0_0_0/0.18)]",
+                                // 24px top gap lets the scaled card behind peek out.
                                 detent === "large"
-                                    ? "h-[calc(100dvh-var(--safe-top)-12px)]"
-                                    : "max-h-[calc(100dvh-var(--safe-top)-12px)]",
+                                    ? "h-[calc(var(--vvh,100dvh)-var(--safe-top)-24px)]"
+                                    : "max-h-[calc(var(--vvh,100dvh)-var(--safe-top)-24px)]",
                                 className
                             )}
+                            // Sit on top of the on-screen keyboard (--kb from useVisualViewport).
+                            style={{ bottom: "var(--kb, 0px)" }}
                         >
                             {description ? (
                                 <Drawer.Description className="sr-only">
@@ -66,7 +85,12 @@ export function Sheet({
                                 aria-hidden
                                 className="bg-label-3 absolute top-[5px] left-1/2 z-40 h-[5px] w-9 -translate-x-1/2 rounded-full"
                             />
-                            {children}
+                            {/* overflow: clip (not hidden) can't be scrolled by focus(),
+                                so autofocusing a field mid-animation can't shift the
+                                content sideways; vaul's ::after filler stays visible. */}
+                            <div className="flex min-h-0 flex-1 flex-col overflow-clip rounded-t-[38px]">
+                                {children}
+                            </div>
                         </Drawer.Content>
                     </Drawer.Portal>
                 </Drawer.Root>
@@ -83,7 +107,7 @@ export function Sheet({
                         aria-describedby={undefined}
                         className={cn(
                             "elevated fixed top-1/2 left-1/2 z-50 flex w-[min(560px,calc(100vw-48px))] -translate-x-1/2 -translate-y-1/2 flex-col",
-                            "bg-grouped overflow-hidden rounded-[32px] shadow-[var(--menu-shadow)] outline-none",
+                            "bg-grouped overflow-visible rounded-[32px] shadow-[var(--menu-shadow)] outline-none",
                             "data-[state=closed]:animate-pop-out data-[state=open]:animate-pop-in",
                             detent === "large"
                                 ? "h-[min(760px,calc(100dvh-64px))]"
@@ -96,7 +120,9 @@ export function Sheet({
                                 {description}
                             </Dialog.Description>
                         ) : null}
-                        {children}
+                        <div className="flex min-h-0 flex-1 flex-col overflow-clip rounded-[32px]">
+                            {children}
+                        </div>
                     </Dialog.Content>
                 </Dialog.Portal>
             </Dialog.Root>
@@ -136,11 +162,11 @@ export function SheetHeader({
                 className
             )}
         >
-            <div className="flex min-w-11 flex-1 justify-start">{leading}</div>
+            <div className="flex min-w-fit flex-1 justify-start">{leading}</div>
             <SheetTitle className="text-headline min-w-0 shrink truncate text-center">
                 {title}
             </SheetTitle>
-            <div className="flex min-w-11 flex-1 justify-end">{trailing}</div>
+            <div className="flex min-w-fit flex-1 justify-end">{trailing}</div>
         </div>
     );
 }
@@ -149,14 +175,16 @@ export function SheetHeader({
 export function SheetBody({
     children,
     className,
-}: {
+    ...rest
+}: React.HTMLAttributes<HTMLDivElement> & {
     children: React.ReactNode;
     className?: string;
 }) {
     return (
         <div
+            {...rest}
             className={cn(
-                "pb-safe min-h-0 flex-1 overflow-y-auto overscroll-contain",
+                "pb-safe-kb min-h-0 flex-1 overflow-y-auto overscroll-contain",
                 className
             )}
         >

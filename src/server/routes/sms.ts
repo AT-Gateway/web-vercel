@@ -3,12 +3,19 @@ import type { FastifyInstance } from 'fastify';
 import type { createRepo } from '../db/repo';
 import type { SseHub } from '../realtime/sseHub';
 
+// Client-generated message ids (idempotency keys) must be RFC 4122 UUIDs.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// Any UUID-shaped id; looked-up ids must parse as uuid or Postgres rejects the query.
+const UUID_SHAPE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function registerSmsRoutes(app: FastifyInstance, repo: ReturnType<typeof createRepo>, hub: SseHub) {
   app.get('/api/sms/conversations', async (req) => {
     const p = req.pairAuth!;
     const limit = Math.min(Number((req.query as any)?.limit ?? 150), 500);
     const conversations = await repo.listConversations(p.pairingId, limit);
-    return { ok: true, conversations };
+    // Server-clock time since the Android gateway last polled its outbox (null = never).
+    const gatewayIdleMs = await repo.getGatewayIdleMs(p.gatewayDeviceId).catch(() => null);
+    return { ok: true, conversations, gatewayIdleMs };
   });
 
   app.get('/api/sms/messages', async (req, reply) => {
@@ -16,10 +23,17 @@ export async function registerSmsRoutes(app: FastifyInstance, repo: ReturnType<t
     const q = (req.query ?? {}) as any;
     // Backwards compatible: `peer` used to be required. Now clients should send `threadId`.
     const threadId = String(q.threadId ?? q.thread ?? q.peer ?? '').trim();
-    const limit = Math.min(Number(q.limit ?? 300), 1000);
+    const limit = Math.floor(Math.min(Math.max(Number(q.limit ?? 300) || 300, 1), 1000));
     if (!threadId) return reply.code(400).send({ ok: false, error: 'Missing threadId' });
 
-    const messages = await repo.listMessages(p.pairingId, threadId, limit);
+    // Returns the newest `limit` messages (older than `before`, a ts_ms cursor, when given), ascending.
+    const before = Number(q.before);
+    const messages = await repo.listMessages(
+      p.pairingId,
+      threadId,
+      limit,
+      Number.isFinite(before) && before > 0 ? Math.floor(before) : null
+    );
     return { ok: true, threadId, messages };
   });
 
@@ -112,10 +126,17 @@ export async function registerSmsRoutes(app: FastifyInstance, repo: ReturnType<t
       return reply.code(409).send({ ok: false, error: 'This chat is blocked. Unblock it before sending.' });
     }
 
-    const id = randomUUID();
+    // The client's id doubles as an idempotency key, so a retried request never sends twice.
+    const id =
+      typeof body.clientId === 'string' && UUID_RE.test(body.clientId) ? body.clientId.toLowerCase() : randomUUID();
     const { norm, tail } = repo.normalizePhone(to);
 
-    await repo.enqueueOutboundMessage({
+    // "Try Again" replaces the failed copy instead of leaving it beside the new one.
+    if (typeof body.replacesMessageId === 'string' && UUID_SHAPE_RE.test(body.replacesMessageId.trim())) {
+      await repo.deleteFailedOutbound(p.pairingId, body.replacesMessageId.trim().toLowerCase());
+    }
+
+    const { inserted } = await repo.enqueueOutboundMessage({
       id,
       pairingId: p.pairingId,
       gatewayDeviceId: p.gatewayDeviceId,
@@ -130,6 +151,13 @@ export async function registerSmsRoutes(app: FastifyInstance, repo: ReturnType<t
       subscriptionId,
     });
 
+    if (!inserted) {
+      // Already enqueued by an earlier attempt with the same id.
+      const owner = await repo.messageOwner(id);
+      if (owner !== p.pairingId) return reply.code(409).send({ ok: false, error: 'Duplicate message id' });
+      return { ok: true, id, duplicate: true };
+    }
+
     // Replying implies the conversation has been read.
     await repo.markThreadRead(p.pairingId, tail || norm || to);
 
@@ -143,6 +171,18 @@ export async function registerSmsRoutes(app: FastifyInstance, repo: ReturnType<t
     });
 
     return { ok: true, id };
+  });
+
+  // Deletes a failed outbound message. Only failed outbound rows can be deleted.
+  app.post('/api/sms/messages/:id/delete', async (req, reply) => {
+    const p = req.pairAuth!;
+    const id = String((req.params as any)?.id ?? '').trim();
+    if (!UUID_SHAPE_RE.test(id)) return reply.code(404).send({ ok: false, error: 'Message not found or not failed' });
+
+    const ok = await repo.deleteFailedOutbound(p.pairingId, id.toLowerCase());
+    if (!ok) return reply.code(404).send({ ok: false, error: 'Message not found or not failed' });
+    hub.emit(p.pairingId, 'chats', {});
+    return { ok: true };
   });
 
   // SSE: stable stream per pairing (auth via pairToken)

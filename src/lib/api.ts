@@ -32,7 +32,11 @@ export type Conversation = {
     blocked?: boolean;
 };
 
-export type ListConversationsRes = ApiOk<{ conversations: Conversation[] }>;
+export type ListConversationsRes = ApiOk<{
+    conversations: Conversation[];
+    /** Milliseconds since the Android gateway last polled the outbox (server clock). */
+    gatewayIdleMs?: number | null;
+}>;
 
 export type Message = {
     id: string;
@@ -48,6 +52,10 @@ export type Message = {
     simSlotIndex: number | null;
     subscriptionId: number | null;
     createdBy: "android" | "pwa" | "telegram";
+    /** Client-only: an optimistic row the server hasn't returned yet. */
+    local?: boolean;
+    /** Client-only: the send is queued until the network comes back. */
+    waiting?: boolean;
 };
 
 export type ListMessagesRes = ApiOk<{ messages: Message[] }>;
@@ -68,7 +76,7 @@ export type Device = {
     lastSeenAt: number | null;
 };
 
-export type SendSmsRes = ApiOk<{ id: string }>;
+export type SendSmsRes = ApiOk<{ id: string; duplicate?: boolean }>;
 
 export type ListContactsRes = ApiOk<{ contacts: Contact[] }>;
 
@@ -119,58 +127,98 @@ export function isAuthError(e: unknown): boolean {
     return e instanceof ApiError && (e.status === 401 || e.status === 403);
 }
 
-function url(path: string): string {
+/** Absolute URL for an API path, honoring NEXT_PUBLIC_API_BASE_URL. */
+export function apiUrl(path: string): string {
     if (!API_BASE) return path;
     return API_BASE.replace(/\/$/, "") + path;
 }
 
-async function apiFetch<T>(
-    path: string,
-    opts: RequestInit & { pairToken?: string } = {}
-): Promise<T> {
+const TIMEOUT_TEXT = "The server took too long to respond.";
+
+function statusText(status: number, data: any): string {
+    if (status === 408 || status === 504) return TIMEOUT_TEXT;
+    if (status === 429) return "Too many requests. Try again in a moment.";
+    if (status >= 500) return "The server had a problem. Try again.";
+    const msg = data?.error || data?.message;
+    return typeof msg === "string" && msg ? msg : `Something went wrong (${status}).`;
+}
+
+type ApiFetchOpts = RequestInit & {
+    pairToken?: string;
+    /** Aborts the request and throws ApiError(…, 0) after this long. Default 15 s. */
+    timeoutMs?: number;
+};
+
+async function apiFetch<T>(path: string, opts: ApiFetchOpts = {}): Promise<T> {
+    const { pairToken, timeoutMs = 15_000, signal, ...init } = opts;
     const headers: Record<string, string> = {
-        ...(opts.headers as any),
+        ...(init.headers as any),
     };
 
-    if (opts.pairToken) {
-        headers["X-Pair-Token"] = opts.pairToken;
+    if (pairToken) {
+        headers["X-Pair-Token"] = pairToken;
         headers["ngrok-skip-browser-warning"] = "1";
     }
 
-    if (opts.body && !headers["Content-Type"]) {
+    if (init.body && !headers["Content-Type"]) {
         headers["Content-Type"] = "application/json";
     }
 
-    let res: Response;
+    // One controller for both the timeout and the caller's signal
+    // (AbortSignal.any is missing before iOS 17.4).
+    const ac = new AbortController();
+    let timedOut = false;
+    const t = setTimeout(() => {
+        timedOut = true;
+        ac.abort();
+    }, timeoutMs);
+    const onAbort = () => ac.abort();
+    if (signal) {
+        if (signal.aborted) ac.abort();
+        else signal.addEventListener("abort", onAbort, { once: true });
+    }
+
     try {
-        res = await fetch(url(path), {
-            ...opts,
-            headers,
-        });
-    } catch (err) {
-        if ((err as Error)?.name === "AbortError") throw err;
-        throw new ApiError(
-            typeof navigator !== "undefined" && navigator.onLine === false
-                ? "You're offline."
-                : "Can't reach the server.",
-            0
-        );
-    }
+        let res: Response;
+        try {
+            res = await fetch(apiUrl(path), {
+                ...init,
+                headers,
+                signal: ac.signal,
+            });
+        } catch (err) {
+            if (timedOut) throw new ApiError(TIMEOUT_TEXT, 0);
+            if ((err as Error)?.name === "AbortError" && signal?.aborted) throw err;
+            throw new ApiError(
+                typeof navigator !== "undefined" && navigator.onLine === false
+                    ? "You're offline."
+                    : "Can't reach the server.",
+                0
+            );
+        }
 
-    const text = await res.text();
-    let data: any = null;
-    try {
-        data = text ? JSON.parse(text) : null;
-    } catch {
-        data = null;
-    }
+        let text: string;
+        try {
+            text = await res.text();
+        } catch (err) {
+            if (timedOut) throw new ApiError(TIMEOUT_TEXT, 0);
+            if ((err as Error)?.name === "AbortError" && signal?.aborted) throw err;
+            throw new ApiError("Can't reach the server.", 0);
+        }
+        let data: any = null;
+        try {
+            data = text ? JSON.parse(text) : null;
+        } catch {
+            data = null;
+        }
 
-    if (!res.ok) {
-        const errMsg = data?.error || data?.message || `${res.status} ${res.statusText}`;
-        throw new ApiError(errMsg, res.status);
-    }
+        if (!res.ok) throw new ApiError(statusText(res.status, data), res.status);
 
-    return data as T;
+        return data as T;
+    } finally {
+        clearTimeout(t);
+        signal?.removeEventListener("abort", onAbort);
+    }
 }
 
 export async function health(): Promise<{
@@ -181,6 +229,7 @@ export async function health(): Promise<{
     databaseConfigured?: boolean;
     demoModeEnabled?: boolean;
     demoCode?: string | null;
+    build?: string;
 }> {
     return apiFetch("/api/health");
 }
@@ -203,18 +252,7 @@ export async function pairComplete(params: {
 
 export async function pairMe(pairToken: string, timeoutMs = 10_000): Promise<PairMeRes> {
     // Bounded, so app start never waits forever on a cold or unreachable server.
-    const ac = new AbortController();
-    const t = setTimeout(() => ac.abort(), timeoutMs);
-    try {
-        return await apiFetch("/api/pair/me", { pairToken, signal: ac.signal });
-    } catch (e) {
-        if ((e as Error)?.name === "AbortError") {
-            throw new ApiError("The server took too long to respond.", 0);
-        }
-        throw e;
-    } finally {
-        clearTimeout(t);
-    }
+    return apiFetch("/api/pair/me", { pairToken, timeoutMs });
 }
 
 export async function createInvite(
@@ -242,23 +280,37 @@ export async function revokeDevice(
 
 export async function listConversations(
     pairToken: string,
-    limit = 150
+    limit = 150,
+    opts: { signal?: AbortSignal } = {}
 ): Promise<ListConversationsRes> {
     return apiFetch(`/api/sms/conversations?limit=${encodeURIComponent(String(limit))}`, {
         pairToken,
+        signal: opts.signal,
     });
 }
 
+/**
+ * The newest `limit` messages of a thread (older than `before`, a ts in ms,
+ * when given), in ascending order.
+ */
 export async function listMessages(
     pairToken: string,
     peer: string,
-    limit = 300
+    limit = 300,
+    opts: { before?: number; signal?: AbortSignal } = {}
 ): Promise<ListMessagesRes> {
-    return apiFetch(
+    const qs = new URLSearchParams({
         // Server accepts `peer` for backwards compatibility but prefers `threadId`.
-        `/api/sms/messages?threadId=${encodeURIComponent(peer)}&limit=${encodeURIComponent(String(limit))}`,
-        { pairToken }
-    );
+        threadId: peer,
+        limit: String(limit),
+    });
+    if (opts.before != null && Number.isFinite(opts.before)) {
+        qs.set("before", String(Math.floor(opts.before)));
+    }
+    return apiFetch(`/api/sms/messages?${qs.toString()}`, {
+        pairToken,
+        signal: opts.signal,
+    });
 }
 
 export async function searchMessages(
@@ -328,12 +380,33 @@ export async function deleteThread(
 
 export async function sendSms(
     pairToken: string,
-    params: { to: string; body: string; simSlotIndex?: 0 | 1; subscriptionId?: number }
+    params: {
+        to: string;
+        body: string;
+        simSlotIndex?: 0 | 1;
+        subscriptionId?: number;
+        /** Client-generated UUID; resending the same id never sends a second SMS. */
+        clientId?: string;
+        /** A failed outbound row this send replaces (deleted server-side). */
+        replacesMessageId?: string;
+    }
 ): Promise<SendSmsRes> {
     return apiFetch("/api/sms/send", {
         method: "POST",
         pairToken,
         body: JSON.stringify(params),
+        timeoutMs: 20_000,
+    });
+}
+
+/** Deletes an outbound message the gateway reported as failed. */
+export async function deleteFailedMessage(
+    pairToken: string,
+    id: string
+): Promise<{ ok: true }> {
+    return apiFetch(`/api/sms/messages/${encodeURIComponent(id)}/delete`, {
+        method: "POST",
+        pairToken,
     });
 }
 

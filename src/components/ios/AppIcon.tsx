@@ -13,6 +13,7 @@ export function AppIcon({ size = 96 }: { size?: number }) {
             <img
                 src="/icon.svg"
                 alt=""
+                draggable={false}
                 width={size}
                 height={size}
                 className="size-full"

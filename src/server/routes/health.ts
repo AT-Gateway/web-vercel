@@ -6,6 +6,8 @@ export async function registerHealthRoutes(app: FastifyInstance, cfg: AppConfig)
     return {
       ok: true,
       ts: Date.now(),
+      // Deployed build id, so installed PWAs can detect a new deploy.
+      build: process.env.VERCEL_GIT_COMMIT_SHA ?? 'dev',
       vapidEnabled: cfg.vapid.enabled,
       telegramEnabled: cfg.telegram.enabled,
       telegramFeatureEnabled: cfg.telegram.featureEnabled,

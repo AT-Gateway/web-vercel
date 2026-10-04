@@ -30,7 +30,8 @@ const toneTinted: Record<Tone, string> = {
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
     variant?: "prominent" | "tinted" | "gray" | "glass" | "plain";
     tone?: Tone;
-    size?: "sm" | "md" | "lg";
+    /** "bar": 44pt capsule for sheet toolbars. */
+    size?: "sm" | "md" | "lg" | "bar";
     loading?: boolean;
     icon?: React.ReactNode;
 };
@@ -64,9 +65,12 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
                 "tap relative inline-flex items-center justify-center gap-2 rounded-full font-semibold whitespace-nowrap",
                 "ease-ios transition-[transform,opacity,background-color,filter] duration-200",
                 "active:scale-[0.97] active:brightness-90 disabled:cursor-default disabled:active:scale-100",
-                size === "sm" && "text-subhead min-h-[34px] px-3.5",
+                size === "sm" &&
+                    // 34pt visual, 44pt hit area.
+                    "text-subhead min-h-[34px] px-3.5 before:absolute before:-inset-x-1 before:-inset-y-[5px] before:content-['']",
                 size === "md" && "text-body min-h-11 px-5",
                 size === "lg" && "text-headline min-h-[52px] w-full px-6",
+                size === "bar" && "text-body min-h-11 px-4",
                 variant === "prominent" &&
                     cn(toneBg[tone], "disabled:bg-fill disabled:text-label-3 text-white"),
                 variant === "tinted" && cn(toneTinted[tone], "disabled:opacity-40"),

@@ -1,8 +1,18 @@
 // Service worker: push notifications and (in production) the offline app shell.
 
+// Mirrors src/lib/phone.ts normalizeDigits: Persian/Arabic-Indic digits become ASCII,
+// bidi marks are dropped and NBSP becomes a space.
+function normalizeDigits(s) {
+    return String(s || "")
+        .replace(/[\u06F0-\u06F9]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+        .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+        .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "")
+        .replace(/\u00A0/g, " ");
+}
+
 // Mirrors src/lib/phone.ts threadIdForPeer: last 8 digits group phone formats into one thread.
 function threadIdForPeer(peer) {
-    const raw = String(peer || "").trim();
+    const raw = normalizeDigits(peer).trim();
     if (!raw) return "";
     const digits = raw.replace(/\D+/g, "");
     if (!digits) return raw;
@@ -150,18 +160,46 @@ self.addEventListener("push", (event) => {
         : "/";
 
     event.waitUntil(
-        self.registration.showNotification(title, {
-            body,
-            // One notification per conversation, replaced by newer messages.
-            tag: threadId ? `thread-${threadId}` : undefined,
-            renotify: Boolean(threadId),
-            icon: "/icon-192.png",
-            badge: "/badge-96.png",
-            timestamp: typeof data.ts === "number" ? data.ts : Date.now(),
-            // Action buttons show on Android and desktop; iOS uses the plain tap.
-            actions: code ? [{ action: "copy-code", title: `Copy ${code}` }] : [],
-            data: { url, code },
-        })
+        (async () => {
+            // Every open window refreshes now instead of waiting for its polling loop.
+            const wins = await self.clients.matchAll({
+                type: "window",
+                includeUncontrolled: true,
+            });
+            wins.forEach((c) => c.postMessage({ type: "sms", threadId }));
+
+            // Already looking at this conversation: still show the notification (iOS
+            // revokes push permission after pushes that show nothing), but quietly.
+            const viewing =
+                Boolean(threadId) &&
+                wins.some((c) => {
+                    if (c.visibilityState !== "visible" || !c.focused) return false;
+                    try {
+                        return new URL(c.url).searchParams.get("tid") === threadId;
+                    } catch {
+                        return false;
+                    }
+                });
+
+            await self.registration.showNotification(title, {
+                body,
+                // One notification per conversation, replaced by newer messages.
+                tag: threadId ? `thread-${threadId}` : undefined,
+                renotify: !viewing && Boolean(threadId),
+                silent: viewing,
+                icon: "/icon-192.png",
+                badge: "/badge-96.png",
+                timestamp: typeof data.ts === "number" ? data.ts : Date.now(),
+                // Action buttons show on Android and desktop; iOS uses the plain tap.
+                actions: code ? [{ action: "copy-code", title: `Copy ${code}` }] : [],
+                data: { url, code },
+            });
+
+            // Home-screen badge: unread conversations, counted by the server.
+            if (typeof data.unreadThreads === "number" && self.navigator.setAppBadge) {
+                await self.navigator.setAppBadge(data.unreadThreads).catch(() => {});
+            }
+        })()
     );
 });
 
@@ -179,7 +217,11 @@ self.addEventListener("notificationclick", (event) => {
         self.clients
             .matchAll({ type: "window", includeUncontrolled: true })
             .then((list) => {
-                const client = list.find((c) => "focus" in c);
+                // Prefer the window the user is looking at, not merely the first one.
+                const client =
+                    list.find((c) => c.focused) ||
+                    list.find((c) => c.visibilityState === "visible") ||
+                    list[0];
                 if (client) {
                     // Hand off to the running app: no reload, it navigates in place.
                     client.postMessage({ type: "open-url", url: target });
@@ -187,5 +229,31 @@ self.addEventListener("notificationclick", (event) => {
                 }
                 return self.clients.openWindow(target);
             })
+    );
+});
+
+// The browser rotated or expired the push subscription: subscribe again with the same
+// VAPID key, then let open windows re-register it with the server (AppProvider).
+// WebKit never fires this; the app's launch resync covers iOS.
+self.addEventListener("pushsubscriptionchange", (event) => {
+    event.waitUntil(
+        (async () => {
+            try {
+                const opts = event.oldSubscription && event.oldSubscription.options;
+                if (opts && opts.applicationServerKey) {
+                    await self.registration.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: opts.applicationServerKey,
+                    });
+                }
+            } catch {
+                // The app resubscribes from scratch on the next resync.
+            }
+            const wins = await self.clients.matchAll({
+                type: "window",
+                includeUncontrolled: true,
+            });
+            wins.forEach((c) => c.postMessage({ type: "push-resync" }));
+        })()
     );
 });

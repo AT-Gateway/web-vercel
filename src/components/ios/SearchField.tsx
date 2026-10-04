@@ -64,6 +64,7 @@ export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(
                         autoComplete="off"
                         autoCorrect="off"
                         spellCheck={false}
+                        dir="auto"
                         autoFocus={autoFocus}
                         aria-label={placeholder}
                         value={value}
@@ -78,6 +79,11 @@ export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(
                             onFocusChange?.(false);
                         }}
                         onKeyDown={(e) => {
+                            // The keyboard's Search key dismisses it, like UISearchBar.
+                            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                                e.preventDefault();
+                                e.currentTarget.blur();
+                            }
                             if (e.key === "Escape") {
                                 onChange("");
                                 onCancel?.();
@@ -92,7 +98,7 @@ export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(
                             aria-label="Clear search"
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={() => onChange("")}
-                            className="tap text-label-3 absolute right-0 flex size-9 items-center justify-center"
+                            className="tap text-label-3 absolute right-0 flex size-9 items-center justify-center before:absolute before:-inset-1 before:content-['']"
                         >
                             <ClearGlyph />
                         </button>
@@ -113,7 +119,7 @@ export const SearchField = forwardRef<HTMLInputElement, SearchFieldProps>(
                             onCancel?.();
                             (document.activeElement as HTMLElement | null)?.blur?.();
                         }}
-                        className="tap text-body text-tint min-h-9 whitespace-nowrap active:opacity-50"
+                        className="tap text-body text-tint -my-1 min-h-11 whitespace-nowrap active:opacity-50"
                     >
                         Cancel
                     </button>

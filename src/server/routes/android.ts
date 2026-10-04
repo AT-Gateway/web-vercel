@@ -103,19 +103,33 @@ export async function registerAndroidRoutes(
         try {
           const subs = await repo.listPushSubscriptions(pairingId);
           const peerName = await repo.lookupContactName(gatewayDeviceId, from);
+          // Unread thread count for the home-screen badge (the service worker sets it).
+          const unreadThreads = subs.length > 0 ? await repo.countUnreadThreads(pairingId).catch(() => null) : null;
+          // High urgency so Doze doesn't hold back codes; short TTL so stale codes aren't
+          // delivered hours later; one topic per thread collapses pending pushes.
+          const pushOpts = {
+            urgency: 'high' as const,
+            TTL: code ? 600 : 86400,
+            topic: ('t' + (tail || norm || from)).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 32),
+          };
 
           for (const s of subs) {
             try {
-              await sendPush(s.subscription, {
-                type: 'inbound_sms',
-                id,
-                threadId: tail || norm || from,
-                peer: from,
-                peerName,
-                body: bodyIsEncrypted ? '' : bodyText,
-                code,
-                ts,
-              });
+              await sendPush(
+                s.subscription,
+                {
+                  type: 'inbound_sms',
+                  id,
+                  threadId: tail || norm || from,
+                  peer: from,
+                  peerName,
+                  body: bodyIsEncrypted ? '' : bodyText,
+                  code,
+                  ts,
+                  unreadThreads,
+                },
+                pushOpts
+              );
             } catch (err: any) {
               req.log.warn({ err, deviceId: s.deviceId, statusCode: err?.statusCode }, 'Web push failed');
               if (err?.statusCode === 404 || err?.statusCode === 410) {

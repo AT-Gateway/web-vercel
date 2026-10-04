@@ -147,7 +147,7 @@ export function Row({
 
     const base = cn(
         "group/row flex w-full items-stretch gap-3 pl-4 text-left",
-        interactive && "tap transition-colors duration-150 active:bg-cell-pressed",
+        interactive && "tap cell-press",
         className
     );
 

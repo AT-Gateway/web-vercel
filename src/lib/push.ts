@@ -1,4 +1,5 @@
 import { pushSubscribe, vapidPublicKey } from "@/lib/api";
+import { isIOS, isStandalone } from "@/lib/device";
 import { getOrCreateDeviceId } from "@/lib/storage";
 import { SW_URL } from "@/lib/sw";
 
@@ -14,12 +15,10 @@ export function pushSupport(): PushSupport {
         !("serviceWorker" in navigator) ||
         !("PushManager" in window)
     ) {
-        const standalone = window.matchMedia?.("(display-mode: standalone)").matches;
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
         return {
             supported: false,
             reason:
-                isIOS && !standalone
+                isIOS() && !isStandalone()
                     ? "On iPhone, add this app to your Home Screen to enable notifications."
                     : "This browser doesn't support web notifications.",
         };
@@ -38,21 +37,55 @@ export async function currentPushEnabled(): Promise<boolean> {
     }
 }
 
+// The VAPID key is fetched ahead of time so enablePush can ask for permission
+// as its first await: WebKit drops the prompt once the tap's user activation is
+// spent on a network round trip.
+let keyPromise: Promise<string | null> | null = null;
+
+/** Starts (or reuses) the VAPID public key request. Never rejects. */
+export function prefetchVapidKey(): Promise<string | null> {
+    return (keyPromise ??= vapidPublicKey()
+        .then((r) => r.key ?? null)
+        .catch(() => {
+            keyPromise = null;
+            return null;
+        }));
+}
+
+function deniedText(): string {
+    if (isIOS() && isStandalone()) {
+        return "Notifications are turned off for this app. Turn them on in the Settings app › Notifications.";
+    }
+    if (typeof navigator !== "undefined" && /Android/.test(navigator.userAgent)) {
+        return "Notifications are blocked. Long-press the app icon › App info › Notifications.";
+    }
+    return "Notifications are blocked for this site. Allow them in your browser's site settings.";
+}
+
 export async function enablePush(pairToken: string): Promise<void> {
     const support = pushSupport();
     if (!support.supported) throw new Error(support.reason);
 
-    const keyRes = await vapidPublicKey();
-    if (!keyRes.key) throw new Error("Push isn't configured on the server.");
-
-    const perm = await Notification.requestPermission();
+    if (Notification.permission === "denied") throw new Error(deniedText());
+    // Must be the first await so the browser still sees the user's tap.
+    const perm =
+        Notification.permission === "granted"
+            ? "granted"
+            : await Notification.requestPermission();
     if (perm !== "granted") {
-        throw new Error("Allow notifications for this site in your browser settings.");
+        throw new Error(
+            perm === "denied" ? deniedText() : "Notifications weren't allowed. Try again."
+        );
     }
 
-    await navigator.serviceWorker.register(SW_URL);
+    const key = await (keyPromise ?? prefetchVapidKey());
+    if (!key) throw new Error("Push isn't configured on the server.");
+
+    if (!(await navigator.serviceWorker.getRegistration())) {
+        await navigator.serviceWorker.register(SW_URL);
+    }
     const reg = await navigator.serviceWorker.ready;
-    const keyBytes = urlBase64ToUint8Array(keyRes.key);
+    const keyBytes = urlBase64ToUint8Array(key);
 
     let sub = await reg.pushManager.getSubscription();
     if (sub && !sameKey(sub, keyBytes)) {
@@ -70,13 +103,30 @@ export async function enablePush(pairToken: string): Promise<void> {
 }
 
 /**
+ * Re-sends this browser's existing push subscription to the server, e.g. on
+ * launch or after the browser rotated it, so the server never holds a stale
+ * one. Does nothing without permission or a subscription; never throws.
+ */
+export async function resyncPush(pairToken: string): Promise<void> {
+    try {
+        if (!pushSupport().supported || Notification.permission !== "granted") return;
+        const reg = await navigator.serviceWorker.getRegistration();
+        const sub = await reg?.pushManager.getSubscription();
+        if (sub) await pushSubscribe(pairToken, getOrCreateDeviceId(), sub.toJSON());
+    } catch {
+        // Push may be off on the server (400/503) or the network is down.
+    }
+}
+
+/**
  * Unsubscribes this browser. The server drops the stale subscription the next
  * time a push to it returns 404/410.
  */
 export async function disablePush(): Promise<void> {
     if (!pushSupport().supported) return;
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
+    // getRegistration, not .ready, which never settles without a worker.
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = await reg?.pushManager.getSubscription();
     await sub?.unsubscribe();
 }
 

@@ -12,9 +12,60 @@ function valid(ts: number | null | undefined): ts is number {
     return typeof ts === "number" && Number.isFinite(ts) && ts > 0;
 }
 
+// Intl formatters are expensive to construct, and lists format hundreds of
+// dates per render, so each options set is built once, lazily (never during
+// prerender), and reused.
+let TIME: Intl.DateTimeFormat | undefined;
+let WEEKDAY: Intl.DateTimeFormat | undefined;
+let LIST_DATE: Intl.DateTimeFormat | undefined;
+let THREAD_DAY: Intl.DateTimeFormat | undefined;
+let THREAD_DAY_YEAR: Intl.DateTimeFormat | undefined;
+let RELATIVE_DATE: Intl.DateTimeFormat | undefined;
+let DATE_TIME: Intl.DateTimeFormat | undefined;
+let RTF: Intl.RelativeTimeFormat | undefined;
+
+const time = () =>
+    (TIME ??= new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }));
+const weekday = () =>
+    (WEEKDAY ??= new Intl.DateTimeFormat(undefined, { weekday: "long" }));
+const listDate = () =>
+    (LIST_DATE ??= new Intl.DateTimeFormat(undefined, {
+        year: "2-digit",
+        month: "numeric",
+        day: "numeric",
+    }));
+const threadDay = () =>
+    (THREAD_DAY ??= new Intl.DateTimeFormat(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+    }));
+const threadDayYear = () =>
+    (THREAD_DAY_YEAR ??= new Intl.DateTimeFormat(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+    }));
+const relativeDate = () =>
+    (RELATIVE_DATE ??= new Intl.DateTimeFormat(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+    }));
+const dateTime = () =>
+    (DATE_TIME ??= new Intl.DateTimeFormat(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+    }));
+const rtf = () => (RTF ??= new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }));
+
 export function formatTime(ts: number): string {
     if (!valid(ts)) return "";
-    return new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return time().format(ts);
 }
 
 /** Conversation list date, matching iOS Messages: time today, then Yesterday, weekday, date. */
@@ -24,12 +75,8 @@ export function formatListDate(ts: number): string {
     const diff = daysAgo(ts);
     if (diff <= 0) return formatTime(ts);
     if (diff === 1) return "Yesterday";
-    if (diff < 7) return d.toLocaleDateString([], { weekday: "long" });
-    return d.toLocaleDateString([], {
-        year: "2-digit",
-        month: "numeric",
-        day: "numeric",
-    });
+    if (diff < 7) return weekday().format(d);
+    return listDate().format(d);
 }
 
 /** Centered timestamp between message groups: "Today 9:41 AM", "Mon, Sep 8 at 9:41 AM". */
@@ -40,15 +87,10 @@ export function formatThreadTimestamp(ts: number): { day: string; time: string }
     const time = formatTime(ts);
     if (diff <= 0) return { day: "Today", time };
     if (diff === 1) return { day: "Yesterday", time };
-    if (diff < 7) return { day: d.toLocaleDateString([], { weekday: "long" }), time };
+    if (diff < 7) return { day: weekday().format(d), time };
     const sameYear = d.getFullYear() === new Date().getFullYear();
     return {
-        day: d.toLocaleDateString([], {
-            weekday: "short",
-            month: "short",
-            day: "numeric",
-            ...(sameYear ? {} : { year: "numeric" }),
-        }),
+        day: (sameYear ? threadDay() : threadDayYear()).format(d),
         time: `at ${time}`,
     };
 }
@@ -56,30 +98,19 @@ export function formatThreadTimestamp(ts: number): { day: string; time: string }
 export function formatRelative(ts: number | null | undefined): string {
     if (!valid(ts)) return "Never";
     const diffSec = Math.round((Date.now() - ts) / 1000);
-    const rtf = new Intl.RelativeTimeFormat([], { numeric: "auto" });
     if (Math.abs(diffSec) < 45) return "Just now";
     const mins = Math.round(diffSec / 60);
-    if (Math.abs(mins) < 60) return rtf.format(-mins, "minute");
+    if (Math.abs(mins) < 60) return rtf().format(-mins, "minute");
     const hours = Math.round(mins / 60);
-    if (Math.abs(hours) < 24) return rtf.format(-hours, "hour");
+    if (Math.abs(hours) < 24) return rtf().format(-hours, "hour");
     const days = Math.round(hours / 24);
-    if (Math.abs(days) < 30) return rtf.format(-days, "day");
-    return new Date(ts).toLocaleDateString([], {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-    });
+    if (Math.abs(days) < 30) return rtf().format(-days, "day");
+    return relativeDate().format(ts);
 }
 
 export function formatDateTime(ts: number | null | undefined): string {
     if (!valid(ts)) return "—";
-    return new Date(ts).toLocaleString([], {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-    });
+    return dateTime().format(ts);
 }
 
 /** Countdown "4:59" for short-lived codes. */

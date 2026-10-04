@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
-import { normalizePhone, safePreview } from '../utils/phone';
+import { FA_FOLD_FROM, FA_FOLD_TO, normalizePhone, safePreview } from '../utils/phone';
 
 export type DeviceType = 'pwa' | 'telegram' | 'android' | 'other';
 export type MessageDirection = 'in' | 'out';
@@ -1073,6 +1073,26 @@ export function createRepo(pool: Pool) {
     return { ok: true, marked: r.rowCount ?? 0 };
   }
 
+  /** Number of non-blocked threads with at least one unread inbound message (home-screen badge). */
+  async function countUnreadThreads(pairingId: string): Promise<number> {
+    const r = await pool.query(
+      `
+      SELECT COUNT(DISTINCT COALESCE(m.peer_tail, m.peer_norm, m.peer))::int AS n
+      FROM messages m
+      WHERE m.pairing_id = $1
+        AND m.direction = 'in'
+        AND m.read_at_ms IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM blocked_chats b
+          WHERE b.pairing_id = m.pairing_id
+            AND b.thread_id = COALESCE(m.peer_tail, m.peer_norm, m.peer)
+        )
+      `,
+      [pairingId]
+    );
+    return Number((r.rows[0] as any)?.n ?? 0);
+  }
+
   // ---------------- chat management ----------------
 
   function threadWhereClause(alias: string) {
@@ -1347,9 +1367,19 @@ export function createRepo(pool: Pool) {
     return { inserted: (r.rowCount ?? 0) > 0 };
   }
 
-  async function listMessages(pairingId: string, threadIdOrPeer: string, limit: number): Promise<MessageRow[]> {
+  /**
+   * Returns the NEWEST `limit` messages of a thread (optionally only those older than
+   * `before`, a ts_ms cursor for "load earlier"), in ascending order.
+   */
+  async function listMessages(
+    pairingId: string,
+    threadIdOrPeer: string,
+    limit: number,
+    before?: number | null
+  ): Promise<MessageRow[]> {
     const r = await pool.query(
       `
+      SELECT * FROM (
       SELECT
         m.id,
         COALESCE(m.peer_tail, m.peer_norm, m.peer) AS thread_id,
@@ -1375,10 +1405,13 @@ export function createRepo(pool: Pool) {
           OR (m.peer_norm IS NOT NULL AND m.peer_norm = $2)
           OR (m.peer_tail IS NOT NULL AND m.peer_tail = $2)
         )
-      ORDER BY m.ts_ms ASC
+        AND ($4::bigint IS NULL OR m.ts_ms < $4)
+      ORDER BY m.ts_ms DESC
       LIMIT $3
+      ) t
+      ORDER BY t.ts_ms ASC
       `,
-      [pairingId, threadIdOrPeer, limit]
+      [pairingId, threadIdOrPeer, limit, before ?? null]
     );
 
     return r.rows.map((row: any) => ({
@@ -1427,7 +1460,7 @@ export function createRepo(pool: Pool) {
       LEFT JOIN contacts ct_tail ON ct_tail.gateway_device_id = p.gateway_device_id AND ct_tail.tail = m.peer_tail
       WHERE m.pairing_id = $1
         AND m.body_is_encrypted = FALSE
-        AND m.body ILIKE $2
+        AND translate(m.body, '${FA_FOLD_FROM}', '${FA_FOLD_TO}') ILIKE translate($2, '${FA_FOLD_FROM}', '${FA_FOLD_TO}')
       ORDER BY m.ts_ms DESC
       LIMIT $3
       `,
@@ -1480,8 +1513,9 @@ export function createRepo(pool: Pool) {
     createdBy: MessageCreatedBy;
     simSlotIndex: number | null;
     subscriptionId: number | null;
-  }) {
-    await insertMessage({
+  }): Promise<{ inserted: boolean }> {
+    // Idempotent: the id may be a client-generated key, so a retried request is a no-op.
+    const { inserted } = await tryInsertMessage({
       id: input.id,
       pairingId: input.pairingId,
       gatewayDeviceId: input.gatewayDeviceId,
@@ -1499,13 +1533,97 @@ export function createRepo(pool: Pool) {
       subscriptionId: input.subscriptionId,
     });
 
-    await pool.query('INSERT INTO outbox(message_id, claimed_at) VALUES ($1, NULL) ON CONFLICT (message_id) DO NOTHING', [
-      input.id,
-    ]);
+    if (inserted) {
+      await pool.query('INSERT INTO outbox(message_id, claimed_at) VALUES ($1, NULL) ON CONFLICT (message_id) DO NOTHING', [
+        input.id,
+      ]);
+    }
+    return { inserted };
+  }
+
+  /** The pairing a message belongs to, or null when the message doesn't exist (or has no pairing). */
+  async function messageOwner(id: string): Promise<string | null> {
+    const r = await pool.query('SELECT pairing_id FROM messages WHERE id = $1', [id]);
+    const row = r.rows[0] as any;
+    return row?.pairing_id ? String(row.pairing_id) : null;
+  }
+
+  /**
+   * Deletes one outbound message, only when it belongs to the pairing and has failed.
+   * outbox and delivery_receipts rows go with it (ON DELETE CASCADE). The conversation
+   * summary is recomputed so the list preview doesn't keep showing the deleted text.
+   */
+  async function deleteFailedOutbound(pairingId: string, id: string): Promise<boolean> {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const del = await client.query(
+        `
+        DELETE FROM messages
+        WHERE id = $2 AND pairing_id = $1 AND direction = 'out' AND status = 'failed'
+        RETURNING peer
+        `,
+        [pairingId, id]
+      );
+      const deleted = del.rows[0] as any;
+      if (deleted) {
+        const peer = String(deleted.peer);
+        const latest = await client.query(
+          `
+          SELECT ts_ms, body, body_is_encrypted
+          FROM messages
+          WHERE pairing_id = $1 AND peer = $2
+          ORDER BY ts_ms DESC
+          LIMIT 1
+          `,
+          [pairingId, peer]
+        );
+        const row = latest.rows[0] as any;
+        if (row) {
+          await client.query(
+            `
+            UPDATE conversations
+              SET last_message_ts_ms = $3, last_message_preview = $4, last_body_is_encrypted = $5
+            WHERE pairing_id = $1 AND peer = $2
+            `,
+            [pairingId, peer, Number(row.ts_ms), safePreview(String(row.body), row.body_is_encrypted === true), row.body_is_encrypted === true]
+          );
+        } else {
+          await client.query('DELETE FROM conversations WHERE pairing_id = $1 AND peer = $2', [pairingId, peer]);
+        }
+      }
+      await client.query('COMMIT');
+      return Boolean(deleted);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Milliseconds since the gateway last polled its outbox, measured on the server clock
+   * (never the phone's). null when it has never polled.
+   */
+  async function getGatewayIdleMs(gatewayDeviceId: string): Promise<number | null> {
+    const r = await pool.query(
+      `
+      SELECT (EXTRACT(EPOCH FROM (now() - last_poll_at)) * 1000)::bigint AS idle
+      FROM gateway_devices
+      WHERE id = $1
+      `,
+      [gatewayDeviceId]
+    );
+    const row = r.rows[0] as any;
+    if (!row || row.idle === null || row.idle === undefined) return null;
+    return Math.max(0, Number(row.idle));
   }
 
   async function claimOutbox(gatewayDeviceId: string, limit: number, claimTtlMs: number): Promise<OutboxItem[]> {
     await upsertGatewayDevice(gatewayDeviceId);
+    // Only outbox polls count as gateway liveness (web sends also bump last_seen_at).
+    await pool.query('UPDATE gateway_devices SET last_poll_at = now() WHERE id = $1', [gatewayDeviceId]);
 
     const staleBefore = new Date(Date.now() - claimTtlMs);
 
@@ -1667,6 +1785,7 @@ export function createRepo(pool: Pool) {
     resolvePeerByThreadId,
     markThreadRead,
     markThreadUnread,
+    countUnreadThreads,
     listBlockedChats,
     isThreadBlocked,
     blockThread,
@@ -1679,6 +1798,8 @@ export function createRepo(pool: Pool) {
     listMessages,
     searchMessages,
     getMessageMeta,
+    messageOwner,
+    deleteFailedOutbound,
 
     // telegram
     getTelegramSession,
@@ -1698,6 +1819,7 @@ export function createRepo(pool: Pool) {
     claimOutbox,
     updateOutboxStatus,
     markDelivered,
+    getGatewayIdleMs,
 
     // util
     normalizePhone,

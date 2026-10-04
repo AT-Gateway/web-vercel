@@ -13,6 +13,12 @@
     }
 }
 
+/* Split view (sidebar + detail): AppShell sets <html data-layout="split">. */
+@custom-variant split (&:where([data-layout="split"] *));
+
+/* Short landscape (phone on its side). */
+@custom-variant short (@media (max-height: 500px) and (orientation: landscape));
+
 /*
  * Design system — modelled on iOS 26 / Apple HIG.
  *
@@ -121,6 +127,8 @@
     --safe-bottom: env(safe-area-inset-bottom, 0px);
     --safe-left: env(safe-area-inset-left, 0px);
     --safe-right: env(safe-area-inset-right, 0px);
+    /* Bottom safe area, or 0 while the iOS keyboard covers it (--kb: useVisualViewport). */
+    --safe-bottom-kb: max(0px, calc(var(--safe-bottom) - var(--kb, 0px)));
 }
 
 /* Elevated surfaces (sheets, popovers): in dark mode iOS lifts them to lighter grays. */
@@ -441,6 +449,40 @@
     padding-bottom: var(--safe-bottom);
 }
 
+@utility pb-safe-kb {
+    padding-bottom: var(--safe-bottom-kb);
+}
+
+@utility pl-safe {
+    padding-left: var(--safe-left);
+}
+
+@utility pr-safe {
+    padding-right: var(--safe-right);
+}
+
+@utility px-safe {
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
+}
+
+/*
+ * iOS table-cell press highlight: nothing on quick taps (< ~60ms), a solid
+ * pressed color while held, and a fade-out on release. Suppressed while an
+ * ancestor is being swiped ([data-swiping]).
+ */
+@utility cell-press {
+    transition: background-color 350ms var(--motion-ios);
+    &:active {
+        background-color: var(--sys-cell-pressed);
+        transition-duration: 0s;
+        transition-delay: 60ms;
+    }
+    [data-swiping] &:active {
+        background-color: transparent;
+    }
+}
+
 @layer base {
     html {
         -webkit-text-size-adjust: 100%;
@@ -465,6 +507,24 @@
         font-synthesis-weight: none;
         text-rendering: optimizeLegibility;
         -webkit-tap-highlight-color: transparent;
+    }
+
+    /* Touch devices: chrome isn't selectable (like native UI); fields re-enable it,
+       and the `select-text` utility (utilities layer) wins over this base rule. */
+    @media (hover: none) and (pointer: coarse) {
+        body {
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
+        }
+
+        input,
+        textarea,
+        [contenteditable] {
+            -webkit-user-select: text;
+            user-select: text;
+            -webkit-touch-callout: default;
+        }
     }
 
     button,
@@ -536,8 +596,32 @@
     background-color: var(--sys-bg);
 }
 
-body:has([data-vaul-drawer][data-state="open"]) {
+/* Any [data-vaul-drawer] — not just open ones — so the black stays through vaul's
+   close animation (Radix Presence keeps the content mounted until it ends). */
+body:has([data-vaul-drawer]) {
     background-color: #000;
+}
+
+/* The scaled-back page behind a sheet doesn't need live blur (costly, invisible). */
+body:has([data-vaul-drawer])
+    [data-vaul-drawer-wrapper]
+    :is(.glass, .glass-bar, .edge-top, .edge-bottom) {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+}
+
+/* Scrolled nav bar (NavBar sets data-scrolled): the glass-bar underneath already
+   diffuses, so floating glass controls and the scroll-edge blur can drop theirs. */
+header[data-scrolled] .glass {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+}
+
+header[data-scrolled] .edge-top {
+    visibility: hidden;
+    transition:
+        opacity 300ms,
+        visibility 0s 300ms;
 }
 
 /* UISlider (src/components/ios/Slider.tsx) */

@@ -18,7 +18,7 @@ import type {
   TelegramSession,
   createRepo,
 } from './repo';
-import { normalizePhone } from '../utils/phone';
+import { foldSearchText, normalizePhone } from '../utils/phone';
 
 type Repo = ReturnType<typeof createRepo>;
 type DemoConfig = AppConfig['demo'];
@@ -677,6 +677,18 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
       return useReal('markThreadUnread', pairingId, threadId);
     },
 
+    async countUnreadThreads(pairingId: string) {
+      if (isDemoPairing(cfg, pairingId)) {
+        const threads = new Set(state.messages.map((m) => m.threadId || threadIdFor(m.peer)));
+        let n = 0;
+        for (const thread of threads) {
+          if (!isDemoThreadBlocked(thread) && unreadCountForThread(thread) > 0) n += 1;
+        }
+        return n;
+      }
+      return useReal('countUnreadThreads', pairingId);
+    },
+
     async listBlockedChats(pairingId: string): Promise<BlockedChatRow[]> {
       if (isDemoPairing(cfg, pairingId)) {
         return [...state.blockedChats.entries()]
@@ -789,24 +801,25 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
       return useReal('tryInsertMessage', input);
     },
 
-    async listMessages(pairingId: string, threadIdOrPeer: string, limit: number): Promise<MessageRow[]> {
+    async listMessages(pairingId: string, threadIdOrPeer: string, limit: number, before?: number | null): Promise<MessageRow[]> {
       if (isDemoPairing(cfg, pairingId)) {
         const thread = threadIdOrPeer;
         return state.messages
           .filter((m) => messageMatchesThread(m, thread))
+          .filter((m) => before === null || before === undefined || m.ts < before)
           .sort((a, b) => a.ts - b.ts)
           .slice(-limit)
           .map((m) => ({ ...m, peerName: contactName(m.peer) ?? m.peerName }));
       }
-      return useReal('listMessages', pairingId, threadIdOrPeer, limit);
+      return useReal('listMessages', pairingId, threadIdOrPeer, limit, before ?? null);
     },
 
     async searchMessages(pairingId: string, query: string, limit: number): Promise<MessageRow[]> {
       if (isDemoPairing(cfg, pairingId)) {
-        const q = query.trim().toLowerCase();
+        const q = foldSearchText(query.trim()).toLowerCase();
         if (!q) return [];
         return state.messages
-          .filter((m) => !m.bodyIsEncrypted && m.body.toLowerCase().includes(q))
+          .filter((m) => !m.bodyIsEncrypted && foldSearchText(m.body).toLowerCase().includes(q))
           .sort((a, b) => b.ts - a.ts)
           .slice(0, limit)
           .map((m) => ({ ...m, peerName: contactName(m.peer) ?? m.peerName }));
@@ -819,6 +832,22 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
       if (msg) return { pairingId: cfg.pairingId, peer: msg.peer, gatewayDeviceId: cfg.gatewayDeviceId };
       if (!realRepo) return null;
       return realRepo.getMessageMeta(id);
+    },
+
+    async messageOwner(id: string) {
+      if (state.messages.some((m) => m.id === id)) return cfg.pairingId;
+      if (!realRepo) return null;
+      return realRepo.messageOwner(id);
+    },
+
+    async deleteFailedOutbound(pairingId: string, id: string) {
+      if (isDemoPairing(cfg, pairingId)) {
+        const idx = state.messages.findIndex((m) => m.id === id && m.direction === 'out' && m.status === 'failed');
+        if (idx < 0) return false;
+        state.messages.splice(idx, 1);
+        return true;
+      }
+      return useReal('deleteFailedOutbound', pairingId, id);
     },
 
     async getTelegramSession(chatId: string) {
@@ -954,6 +983,9 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
       subscriptionId: number | null;
     }) {
       if (isDemoPairing(cfg, input.pairingId) || isDemoGateway(cfg, input.gatewayDeviceId)) {
+        // Idempotent like the real repo: a retried client id is a no-op.
+        if (state.messages.some((m) => m.id === input.id)) return { inserted: false };
+
         pushDemoMessage(
           buildMessage({
             id: input.id,
@@ -979,7 +1011,7 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
             createdBy: 'android',
           })
         );
-        return;
+        return { inserted: true };
       }
       return useReal('enqueueOutboundMessage', input);
     },
@@ -1007,6 +1039,12 @@ export function createDemoAwareRepo(realRepo: Repo | null, cfg: DemoConfig): Rep
         return;
       }
       return useReal('markDelivered', id, deliveredAtMs);
+    },
+
+    async getGatewayIdleMs(gatewayDeviceId: string) {
+      // The demo gateway is always "online".
+      if (isDemoGateway(cfg, gatewayDeviceId)) return 0;
+      return useReal('getGatewayIdleMs', gatewayDeviceId);
     },
 
     normalizePhone,

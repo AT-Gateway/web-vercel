@@ -32,6 +32,7 @@ export function NavBar({
 }) {
     return (
         <header
+            data-scrolled={scrolled || undefined}
             className={cn(
                 "pt-safe pointer-events-none absolute inset-x-0 top-0 z-30",
                 className
@@ -54,7 +55,7 @@ export function NavBar({
                 />
             ) : null}
             <div className="relative flex min-h-[60px] items-center gap-2 px-4 py-2">
-                <div className="pointer-events-auto flex min-w-11 flex-1 items-center justify-start gap-2">
+                <div className="pointer-events-auto flex min-w-fit flex-1 items-center justify-start gap-2">
                     {leading}
                 </div>
                 {center ? (
@@ -72,7 +73,7 @@ export function NavBar({
                         {title}
                     </div>
                 ) : null}
-                <div className="pointer-events-auto flex min-w-11 flex-1 items-center justify-end gap-2">
+                <div className="pointer-events-auto flex min-w-fit flex-1 items-center justify-end gap-2">
                     {trailing}
                 </div>
             </div>
@@ -84,14 +85,19 @@ export function LargeTitle({
     children,
     subtitle,
     className,
+    titleRef,
 }: {
     children: React.ReactNode;
     subtitle?: React.ReactNode;
     className?: string;
+    /** Ref to the <h1>, e.g. to observe when it scrolls under the bar. */
+    titleRef?: React.Ref<HTMLHeadingElement>;
 }) {
     return (
         <div className={cn("px-4 pb-2", className)}>
-            <h1 className="text-large-title font-bold">{children}</h1>
+            <h1 ref={titleRef} className="text-large-title font-bold text-balance">
+                {children}
+            </h1>
             {subtitle ? (
                 <div className="text-subhead text-label-2 mt-0.5">{subtitle}</div>
             ) : null}

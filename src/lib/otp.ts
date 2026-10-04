@@ -4,9 +4,10 @@
  * Dependency-free so server code can import it with a relative path.
  */
 
-// Words that mark a message as carrying a verification code (English + Persian).
+// Words that mark a message as carrying a verification code (English + Persian,
+// plus the Arabic-letter spellings ك/ي that some senders and keyboards use).
 const KEYWORD =
-    /(code|otp|one[- ]time|pin\b|passcode|password|verif|verification|login|sign[- ]?in|2fa|security|کد|رمز|تایید|تأیید|یکبار)/gi;
+    /(code|otp|one[- ]time|pin\b|passcode|password|verif|verification|login|sign[- ]?in|2fa|security|کد|رمز|تایید|تأیید|یکبار|كد|تاييد|تأييد)/gi;
 
 // 4–8 digits, optionally Google-style "G-123456", not part of a longer number,
 // a phone number, a decimal, a time ("12:30") or a date ("2026-10-03").
