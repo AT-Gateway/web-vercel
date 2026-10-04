@@ -132,6 +132,11 @@
     --safe-bottom-kb: max(0px, calc(var(--safe-bottom) - var(--kb, 0px)));
 }
 
+/* Keyboard up (however iOS sizes the viewport): no home-indicator gap above it. */
+:root[data-keyboard] {
+    --safe-bottom-kb: 0px;
+}
+
 /* Elevated surfaces (sheets, popovers): in dark mode iOS lifts them to lighter grays. */
 .elevated {
     --sys-bg: light-dark(#ffffff, #1c1c1e);
@@ -400,12 +405,18 @@
     box-shadow: var(--glass-shadow);
 }
 
-/* iOS 27 uniform toolbar: frosted bar that appears once content scrolls under it. */
-@utility glass-bar {
-    background-color: var(--glass-bg-strong);
-    -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 1.4)) saturate(180%);
-    backdrop-filter: blur(calc(var(--glass-blur) * 1.4)) saturate(180%);
-    box-shadow: inset 0 -0.5px 0 var(--sys-separator);
+/*
+ * Nav bar backdrop that appears once content scrolls under it: the screen's
+ * background color at the top fading to transparent — no blur, no hairline.
+ * Follows the surface behind it (--list-bg in the sidebar, else --sys-bg).
+ */
+@utility bar-fade {
+    background-image: linear-gradient(
+        to bottom,
+        var(--list-bg, var(--sys-bg)) 0%,
+        var(--list-bg, var(--sys-bg)) 45%,
+        transparent 100%
+    );
 }
 
 /* Scroll-edge effect: plain blur where content passes under the composer (no color fade). */
@@ -599,16 +610,7 @@ body:has([data-vaul-drawer]) {
 }
 
 /* The scaled-back page behind a sheet doesn't need live blur (costly, invisible). */
-body:has([data-vaul-drawer])
-    [data-vaul-drawer-wrapper]
-    :is(.glass, .glass-bar, .edge-bottom) {
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-}
-
-/* Scrolled nav bar (NavBar sets data-scrolled): the glass-bar underneath already
-   diffuses, so floating glass controls can drop their own blur. */
-header[data-scrolled] .glass {
+body:has([data-vaul-drawer]) [data-vaul-drawer-wrapper] :is(.glass, .edge-bottom) {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
 }

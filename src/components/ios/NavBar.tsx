@@ -5,11 +5,11 @@ import { cn } from "@/lib/utils";
 
 /**
  * iOS 27 navigation bar. Controls float on glass. At rest the bar is fully
- * transparent; once content scrolls beneath it a uniform frosted toolbar fades
- * in to keep titles and buttons legible. (No at-rest backdrop blur: in the
- * Home Screen app the bar reaches the top screen edge, where WebKit's blur
- * samples past the edge and leaves a permanent washed-out band under the
- * status bar.)
+ * transparent; once content scrolls beneath it a fade from the screen's
+ * background color (top) to transparent appears to keep titles and buttons
+ * legible. (No backdrop blur at the top: in the Home Screen app the bar reaches
+ * the top screen edge, where WebKit's blur samples past the edge and leaves a
+ * washed-out band under the status bar.)
  */
 export function NavBar({
     title,
@@ -42,7 +42,7 @@ export function NavBar({
             <div
                 aria-hidden
                 className={cn(
-                    "glass-bar absolute inset-0 transition-opacity duration-300",
+                    "bar-fade absolute inset-0 transition-opacity duration-300",
                     scrolled ? "opacity-100" : "opacity-0"
                 )}
             />

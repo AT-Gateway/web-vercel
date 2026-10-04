@@ -11,7 +11,12 @@ import { isShortScreen } from "@/hooks/useMediaQuery";
  *   --vvt  visualViewport.offsetTop, in px
  *   --kb   keyboard overlap: max(0, innerHeight - vv.height - vv.offsetTop), in px
  *
- * plus the attribute `data-keyboard` while --kb > 80 (keyboard is up).
+ * plus the attribute `data-keyboard` while the software keyboard is up. That is
+ * detected two ways, because iOS versions differ: the keyboard overlaps the
+ * layout viewport (--kb > 80), or the whole viewport shrank — the visible
+ * height dropped > 150px below the tallest seen in this orientation (iOS
+ * resizing like Android, where --kb stays 0). Safari's toolbar collapsing only
+ * moves ~50–80px, so it can't trip the second check.
  *
  * Consumers must always write fallbacks, because the variables are unset during
  * SSR and before this hook runs: `var(--vvh,100dvh)`, `var(--vvt,0px)`,
@@ -34,6 +39,10 @@ export function useVisualViewport(): void {
         const root = document.documentElement;
         let raf = 0;
         let timeout: ReturnType<typeof setTimeout> | undefined;
+        // Tallest visible height per orientation (keyed by width), the baseline
+        // a shrinking viewport is compared against.
+        let baseWidth = 0;
+        let baseHeight = 0;
 
         const apply = () => {
             raf = 0;
@@ -45,10 +54,17 @@ export function useVisualViewport(): void {
                 Math.round(window.innerHeight - vv.height - vv.offsetTop)
             );
             if (window.scrollY !== 0) window.scrollTo(0, 0);
+            const w = Math.round(window.innerWidth);
+            if (w !== baseWidth) {
+                baseWidth = w;
+                baseHeight = 0;
+            }
+            baseHeight = Math.max(baseHeight, h + top, Math.round(window.innerHeight));
+            const shrunk = baseHeight - h > 150;
             root.style.setProperty("--vvh", h + "px");
             root.style.setProperty("--vvt", top + "px");
             root.style.setProperty("--kb", kb + "px");
-            if (kb > 80) root.dataset.keyboard = "";
+            if (kb > 80 || shrunk) root.dataset.keyboard = "";
             else delete root.dataset.keyboard;
         };
 
