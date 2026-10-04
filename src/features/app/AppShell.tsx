@@ -383,7 +383,7 @@ function SplitView({
         <div className="bg-bg flex h-full">
             <aside
                 aria-label="Conversations"
-                className="border-separator h-full w-[var(--sidebar-width)] shrink-0 overflow-hidden border-r-[0.5px] lg:w-[400px]"
+                className="border-separator h-full lg:rounded-4xl lg:m-4 lg:h-[calc(100%-2rem)] w-[var(--sidebar-width)] shrink-0 overflow-hidden border-r-[0.5px] lg:w-[400px]"
             >
                 <ConversationList
                     sidebar

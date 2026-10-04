@@ -417,7 +417,7 @@ export const ConversationList = memo(function ConversationList({
                     <li
                         key={c.threadId}
                         // Offscreen rows skip layout and paint.
-                        className="group/item [contain-intrinsic-size:auto_84px] [content-visibility:auto]"
+                        className="-mt-0.5 group/item [contain-intrinsic-size:auto_84px] [content-visibility:auto]"
                     >
                         <ConversationRow
                             conversation={c}

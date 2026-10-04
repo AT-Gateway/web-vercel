@@ -102,7 +102,7 @@ export function Sheet({
         <SheetKindContext.Provider value="dialog">
             <Dialog.Root open={open} onOpenChange={onOpenChange}>
                 <Dialog.Portal>
-                    <Dialog.Overlay className="data-[state=closed]:animate-fade-out data-[state=open]:animate-fade-in fixed inset-0 z-50 bg-[var(--scrim)]" />
+                    <Dialog.Overlay className="data-[state=closed]:animate-fade-out data-[state=open]:animate-fade-in fixed inset-0 z-50 bg-[var(--scrim)] backdrop-blur-[14px]" />
                     <Dialog.Content
                         aria-describedby={undefined}
                         className={cn(

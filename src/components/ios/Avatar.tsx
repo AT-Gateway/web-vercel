@@ -28,7 +28,7 @@ export function Avatar({
         >
             {initials ? (
                 <span
-                    className="font-semibold tracking-[0.02em]"
+                    className="font-bold tracking-tight"
                     style={{
                         fontSize: size * (initials.length > 1 ? 0.4 : 0.45),
                         lineHeight: 1,
@@ -41,7 +41,7 @@ export function Avatar({
                     viewBox="0 0 40 40"
                     width={size}
                     height={size}
-                    className="absolute inset-0"
+                    className="absolute inset-0 p-1.5 rounded-full overflow-hidden"
                 >
                     <circle cx="20" cy="15.5" r="7" fill="currentColor" opacity="0.95" />
                     <path

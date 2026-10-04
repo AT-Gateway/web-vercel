@@ -145,7 +145,7 @@ export const ConversationRow = memo(function ConversationRow({
                     {/* Unread indicator gutter */}
                     <span
                         aria-hidden
-                        className="split:w-5 flex w-6 shrink-0 justify-center self-stretch pt-[30px]"
+                        className="split:w-5 flex w-6 shrink-0 justify-center me-0.5"
                     >
                         {unread ? (
                             <span
@@ -161,16 +161,16 @@ export const ConversationRow = memo(function ConversationRow({
 
                     <span
                         className={cn(
-                            "ml-3 flex min-w-0 flex-1 flex-col py-[10px] pr-4",
+                            "ml-3 flex min-w-0 flex-1 flex-col py-[10px] pr-4 gap-0.5",
                             // Hairline separator from the text edge to the trailing edge.
                             "border-separator border-b-[0.5px]",
                             "group-last/item:border-b-0",
                             selected && "split:border-transparent"
                         )}
                     >
-                        <span className="flex items-baseline gap-2">
+                        <span className="flex items-center gap-2">
                             <span className="flex min-w-0 flex-1 items-center gap-1.5">
-                                <span className="text-headline truncate" dir="auto">
+                                <span className="text-base font-bold truncate" dir="auto">
                                     {name}
                                 </span>
                                 {c.blocked ? (
@@ -186,7 +186,7 @@ export const ConversationRow = memo(function ConversationRow({
                             </span>
                             <span
                                 className={cn(
-                                    "text-subhead text-label-2 flex shrink-0 items-center gap-0.5",
+                                    "text-xs text-label-2 flex shrink-0 items-center gap-0.5",
                                     selected && "split:text-white/80"
                                 )}
                             >
@@ -201,7 +201,7 @@ export const ConversationRow = memo(function ConversationRow({
                         {/* Leading-aligned like the name; <bdi> keeps RTL text ordered. */}
                         <span
                             className={cn(
-                                "text-subhead text-label-2 mt-0.5 line-clamp-2 min-h-[2lh] text-left",
+                                "text-sm text-label-2 mt-0.5 line-clamp-2 min-h-[2lh]",
                                 selected && "split:text-white/85"
                             )}
                         >
